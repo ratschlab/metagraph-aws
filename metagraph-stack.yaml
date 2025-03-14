@@ -1,0 +1,240 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Deploys an AWS Batch-based system for Metagraph query execution.'
+
+Resources:
+  MetagraphBucket:
+    Type: AWS::S3::Bucket
+
+  ECSInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+
+  ECSInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref ECSInstanceRole
+
+  MetagraphLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaSubmitBatchJobsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'batch:SubmitJob'
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - 's3:ListBucket'
+                  - 's3:GetObject'
+                Resource:
+                  - 'arn:aws:s3:::metagraph-data-public*'
+                  - !Sub 'arn:aws:s3:::${MetagraphBucket}*'
+
+  MetagraphBatchServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: batch.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSBatchServiceRole
+
+  MetagraphBatchJobRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: MetagraphJobS3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:ListBucket'
+                Resource:
+                  - 'arn:aws:s3:::metagraph-data-public*'
+                  - !Sub 'arn:aws:s3:::${MetagraphBucket}'
+                  - !Sub 'arn:aws:s3:::${MetagraphBucket}/*'
+              - Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                Resource:
+                  - !Sub 'arn:aws:s3:::${MetagraphBucket}/*'
+
+  MetagraphBatchComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      Type: MANAGED
+      State: ENABLED
+      ServiceRole: !GetAtt MetagraphBatchServiceRole.Arn
+      ComputeResources:
+        Type: EC2
+        MinvCpus: 0
+        MaxvCpus: 256
+        InstanceTypes:
+          - r5d.4xlarge # 16 vCPU, 128 GiB RAM, 600 GiB SSD
+        Subnets:
+          - subnet-064a41e7e9f7821a8 # eu-central-2a
+          - subnet-0247650ef94e8aa42 # eu-central-2b
+          - subnet-02ebd4969f85757c4 # eu-central-2c
+        SecurityGroupIds:
+          - sg-08aa6d6a56d63b8cd
+        InstanceRole: !GetAtt ECSInstanceProfile.Arn
+
+  MetagraphBatchJobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      State: ENABLED
+      Priority: 1
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment: !Ref MetagraphBatchComputeEnvironment
+
+  MetagraphBatchJobDefinition:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      Type: container
+      ContainerProperties:
+        Image: 043309319928.dkr.ecr.eu-central-2.amazonaws.com/metagraph-batch:latest
+        Vcpus: 1
+        Memory: 32768
+        Command:
+          - "/bin/bash"
+          - "-c"
+          - |
+            set -e
+
+            source /opt/conda/bin/activate metagraph_env
+
+            mkdir -p /mnt/data
+            cd /mnt/data
+
+            aws s3 cp "$DatasetURL/$GraphFile" .
+            aws s3 cp "$DatasetURL/$AnnoFile" .
+            aws s3 cp "$QueryURL" ./query_sequences.fasta
+
+            metagraph query -i "$GraphFile" -a "$AnnoFile" query_sequences.fasta > "result.txt"
+
+            aws s3 cp "result.txt" "$ResultURL"
+            
+            rm $GraphFile $AnnoFile query_sequences.fasta result.txt
+        JobRoleArn: !GetAtt MetagraphBatchJobRole.Arn
+
+  MetagraphTaskScheduler:
+    Type: AWS::Lambda::Function
+    Properties:
+      Role: !GetAtt MetagraphLambdaRole.Arn
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Timeout: 300
+      Code:
+        ZipFile: !Sub |
+          import boto3, json, os, uuid, re, math
+          from collections import defaultdict
+
+          s3 = boto3.client('s3')
+          batch = boto3.client('batch')
+
+          def list_indices(bucket, prefix):
+              prefix = prefix.strip('/').rstrip('/')
+              prefix += '/' if prefix else ''
+              directories = defaultdict(dict)
+              paginator = s3.get_paginator("list_objects_v2")
+              for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+                  for element in page.get("Contents", []):
+                      key = element['Key']
+                      is_graph = key.endswith('.dbg')
+                      is_anno = key.endswith('.annodbg')
+                      if is_graph or is_anno:
+                          splt = key.split('/')
+                          directories['/'.join(splt[:-1])[len(prefix):]]['graph' if is_graph else 'anno'] = splt[-1]
+              return directories
+
+          def lambda_handler(event, context):
+              base_url = event["s3_index_url"].rstrip('/') + '/'
+              bucket, prefix = base_url.replace("s3://", "").split("/", 1)
+              prefix = prefix.rstrip('/')
+
+              all_directories = list_indices(bucket, prefix)
+              regex_pattern = event.get("index_filter", ".*")
+              print(f'Found {len(all_directories)} indices in {base_url}')
+              matching_dirs = [(path, files) for path, files in all_directories.items() if re.match(regex_pattern, path)]
+              print(f'{len(matching_dirs)} indices matched against "{regex_pattern}"')
+
+              job_id = context.aws_request_id
+              print(f'Assigning tasks for Job ID {job_id}')
+
+              for relative_path, files in matching_dirs:
+                  if "graph" not in files or "anno" not in files:
+                      print(f"Missing required files in {relative_path}. Found: {list(files.keys())}")
+                      continue
+
+                  task_id = relative_path.replace("/", "_")
+
+                  def file_size(bucket, key): # bytes
+                      return s3.head_object(Bucket=bucket, Key=key)["ContentLength"]
+
+                  graph_file = files["graph"]
+                  anno_file = files["anno"]
+                  graph_size = file_size(bucket, f"{prefix}/{relative_path}/{graph_file}")
+                  anno_size = file_size(bucket, f"{prefix}/{relative_path}/{anno_file}")
+
+                  memory_mib = (graph_size + anno_size) // 2**20 + 2**12 # 4 GiB overhead
+
+                  print(f"Scheduling {task_id} at {memory_mib / 1024} GiB memory")
+                  batch.submit_job(
+                      jobName=f"MetagraphQuery-{task_id}",
+                      jobQueue="${MetagraphBatchJobQueue}",
+                      jobDefinition="${MetagraphBatchJobDefinition}",
+                      containerOverrides={
+                          "memory": memory_mib,
+                          "environment": [
+                              {"name": "DatasetURL", "value": f"s3://{bucket}/{prefix}/{relative_path}"},
+                              {"name": "GraphFile", "value": graph_file},
+                              {"name": "AnnoFile", "value": anno_file},
+                              {"name": "QueryURL", "value": f"s3://${MetagraphBucket}/{event['query_filename']}"},
+                              {"name": "ResultURL", "value": f"s3://${MetagraphBucket}/{job_id}/{task_id}.txt"}
+                          ]
+                      }
+                  )
+
+              return {"JobID": job_id, "ScheduledTasks": len(matching_dirs)}
+
+Outputs:
+  BucketName:
+    Description: 'S3 Bucket for storing queries and their results.'
+    Value: !Ref MetagraphBucket
