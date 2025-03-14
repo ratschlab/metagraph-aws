@@ -95,6 +95,17 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:s3:::${MetagraphBucket}/*'
 
+  MetagraphLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              VolumeSize: 256
+              VolumeType: gp3
+              DeleteOnTermination: true
+
   MetagraphBatchComputeEnvironment:
     Type: AWS::Batch::ComputeEnvironment
     Properties:
@@ -106,7 +117,7 @@ Resources:
         MinvCpus: 0
         MaxvCpus: 256
         InstanceTypes:
-          - r5d.4xlarge # 16 vCPU, 128 GiB RAM, 600 GiB SSD
+          - r5.4xlarge # 16 vCPU, 128 GiB RAM
         Subnets:
           - subnet-064a41e7e9f7821a8 # eu-central-2a
           - subnet-0247650ef94e8aa42 # eu-central-2b
@@ -114,6 +125,9 @@ Resources:
         SecurityGroupIds:
           - sg-08aa6d6a56d63b8cd
         InstanceRole: !GetAtt ECSInstanceProfile.Arn
+        LaunchTemplate:
+          LaunchTemplateId: !Ref MetagraphLaunchTemplate
+          Version: !GetAtt MetagraphLaunchTemplate.LatestVersionNumber
 
   MetagraphBatchJobQueue:
     Type: AWS::Batch::JobQueue
