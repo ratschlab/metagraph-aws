@@ -6,7 +6,6 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y \
     g++ cmake libcurl4-openssl-dev libdeflate-dev libbz2-dev libjemalloc-dev libboost-all-dev \
     && rm -rf /var/lib/apt/lists/*
 
-
 # Clone Metagraph repository and initialize submodules
 RUN git clone --recursive https://github.com/ratschlab/metagraph.git /opt/metagraph
 
