@@ -157,15 +157,23 @@ Resources:
             mkdir -p /mnt/data
             cd /mnt/data
 
-            aws s3 cp "$DatasetURL/$GraphFile" .
-            aws s3 cp "$DatasetURL/$AnnoFile" .
-            aws s3 cp "$QueryURL" ./query_sequences.fasta
+            aws s3 cp "$DATASET_URL/$GRAPH_FILE" .
+            aws s3 cp "$DATASET_URL/$ANNO_FILE" .
+            aws s3 cp "$QUERY_URL" ./query_sequences.fasta
 
-            metagraph query -i "$GraphFile" -a "$AnnoFile" query_sequences.fasta > "result.txt"
 
-            aws s3 cp "result.txt" "$ResultURL"
+            metagraph query \
+              -i "$GRAPH_FILE" \
+              -a "$ANNO_FILE" \
+              --query-mode "$QUERY_MODE" \
+              --num-top-labels "$NUM_TOP_LABELS" \
+              --min-kmers-fraction-label "$MIN_KMERS_FRACTION_LABEL" \
+              --min-kmers-fraction-graph "$MIN_KMERS_FRACTION_GRAPH" \
+              query_sequences.fasta > "result.txt"
+
+            aws s3 cp "result.txt" "$RESULT_URL"
             
-            rm $GraphFile $AnnoFile query_sequences.fasta result.txt
+            rm $GRAPH_FILE $ANNO_FILE query_sequences.fasta result.txt
         JobRoleArn: !GetAtt MetagraphBatchJobRole.Arn
 
   MetagraphTaskScheduler:
@@ -227,7 +235,7 @@ Resources:
                   graph_size = file_size(bucket, f"{prefix}/{relative_path}/{graph_file}")
                   anno_size = file_size(bucket, f"{prefix}/{relative_path}/{anno_file}")
 
-                  memory_mib = (graph_size + anno_size) // 2**20 + 2**12 # 4 GiB overhead
+                  memory_mib = (graph_size + anno_size) // 2**20 + 2**13 # 8 GiB overhead
 
                   print(f"Scheduling {task_id} at {memory_mib / 1024} GiB memory")
                   batch.submit_job(
@@ -237,12 +245,16 @@ Resources:
                       containerOverrides={
                           "memory": memory_mib,
                           "environment": [
-                              {"name": "DatasetURL", "value": f"s3://{bucket}/{prefix}/{relative_path}"},
-                              {"name": "GraphFile", "value": graph_file},
-                              {"name": "AnnoFile", "value": anno_file},
-                              {"name": "QueryURL", "value": f"s3://${MetagraphBucket}/{event['query_filename']}"},
-                              {"name": "ResultURL", "value": f"s3://${MetagraphBucket}/{job_id}/{task_id}.txt"}
-                          ]
+                            {"name": "DATASET_URL", "value": f"s3://{bucket}/{prefix}/{relative_path}"},
+                            {"name": "GRAPH_FILE", "value": graph_file},
+                            {"name": "ANNO_FILE", "value": anno_file},
+                            {"name": "QUERY_URL", "value": f"s3://${MetagraphBucket}/{event['query_filename']}"},
+                            {"name": "RESULT_URL", "value": f"s3://${MetagraphBucket}/{job_id}/{task_id}.txt"},
+                            {"name": "QUERY_MODE", "value": event.get("query_mode", "labels")},
+                            {"name": "NUM_TOP_LABELS", "value": str(event.get("num_top_labels", "inf"))},
+                            {"name": "MIN_KMERS_FRACTION_LABEL", "value": str(event.get("min_kmers_fraction_label", 0.7))},
+                            {"name": "MIN_KMERS_FRACTION_GRAPH", "value": str(event.get("min_kmers_fraction_graph", 0.0))}
+                        ]
                       }
                   )
 
