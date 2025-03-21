@@ -1,7 +1,6 @@
 FROM ubuntu:plucky
 
 # Install required dependencies
-
 RUN apt-get update && apt-get upgrade -y && apt-get install -y \
     awscli git \
     g++ cmake libcurl4-openssl-dev libdeflate-dev libbz2-dev libjemalloc-dev libboost-all-dev \
