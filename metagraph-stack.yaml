@@ -252,17 +252,19 @@ Resources:
               return directories
 
           def lambda_handler(event, context):
-              base_url = event["s3_index_url"].rstrip('/') + '/'
+              base_url = event["query"]["s3_index_url"].rstrip('/') + '/'
               bucket, prefix = base_url.replace("s3://", "").split("/", 1)
               prefix = prefix.rstrip('/')
 
               all_directories = list_indices(bucket, prefix)
-              regex_pattern = event.get("index_filter", ".*")
+              regex_pattern = event["query"].get("index_filter", ".*")
               print(f'Found {len(all_directories)} indices in {base_url}')
               matching_dirs = [(path, files) for path, files in all_directories.items() if re.match(regex_pattern, path)]
               print(f'{len(matching_dirs)} indices matched against "{regex_pattern}"')
 
-              job_id = context.aws_request_id
+              job_id = event["arn"].split(":")[-1] if "arn" in event else context.aws_request_id
+              query_mode = event["query"].get("query_mode", "labels")
+
               print(f'Assigning tasks for Job ID {job_id}')
 
               tasks = []
@@ -295,17 +297,21 @@ Resources:
                             {"name": "DATASET_URL", "value": f"s3://{bucket}/{prefix}/{relative_path}"},
                             {"name": "GRAPH_FILE", "value": graph_file},
                             {"name": "ANNO_FILE", "value": anno_file},
-                            {"name": "QUERY_URL", "value": f"s3://${MetagraphBucket}/queries/{event['query_filename']}"},
+                            {"name": "QUERY_URL", "value": f"s3://${MetagraphBucket}/queries/{event['query']['query_filename']}"},
                             {"name": "RESULT_URL", "value": f"s3://${MetagraphBucket}/{job_id}"},
-                            {"name": "QUERY_MODE", "value": event.get("query_mode", "labels")},
-                            {"name": "NUM_TOP_LABELS", "value": str(event.get("num_top_labels", "inf"))},
-                            {"name": "MIN_KMERS_FRACTION_LABEL", "value": str(event.get("min_kmers_fraction_label", 0.7))},
-                            {"name": "MIN_KMERS_FRACTION_GRAPH", "value": str(event.get("min_kmers_fraction_graph", 0.0))}
+                            {"name": "QUERY_MODE", "value": query_mode},
+                            {"name": "NUM_TOP_LABELS", "value": str(event["query"].get("num_top_labels", "inf"))},
+                            {"name": "MIN_KMERS_FRACTION_LABEL", "value": str(event["query"].get("min_kmers_fraction_label", 0.7))},
+                            {"name": "MIN_KMERS_FRACTION_GRAPH", "value": str(event["query"].get("min_kmers_fraction_graph", 0.0))}
                         ]
                       }
                   )['jobId'])
 
-              return {"job_id": job_id, "tasks": tasks}
+              return {
+                  "query_mode": query_mode,
+                  "job_id": job_id,
+                  "tasks": tasks
+              }
 
   MetagraphJobMonitor:
     Type: AWS::Lambda::Function
@@ -319,20 +325,16 @@ Resources:
           batch = boto3.client('batch')
 
           def lambda_handler(event, context):
-              job_ids = event.get("tasks", [])
-              job_id = event.get("job_id")
-
-              response = batch.describe_jobs(jobs=job_ids)
-
+              tasks = event["tasks"]
+              response = batch.describe_jobs(jobs=tasks)
               statuses = [job["status"] for job in response["jobs"]]
-              all_done = all(status in ("SUCCEEDED", "FAILED") for status in statuses)
-              any_failed = any(status == "FAILED" for status in statuses)
-
               return {
-                  "job_id": job_id,
-                  "tasks": job_ids,
-                  "all_done": all_done,
-                  "any_failed": any_failed
+                  "query_mode": event["query_mode"],
+                  "job_id": event["job_id"],
+                  "tasks": tasks,
+                  "total": len(statuses),
+                  "fails": sum(status == "FAILED" for status in statuses),
+                  "all_done": all(status in ("SUCCEEDED", "FAILED") for status in statuses)
               }
 
       Runtime: python3.11
@@ -372,6 +374,8 @@ Resources:
 
               return {
                   "job_id": job_id,
+                  "fails": event["fails"],
+                  "total": len(event["tasks"]),
                   "merged_key": merged_key
               }
       Runtime: python3.11
@@ -396,19 +400,19 @@ Resources:
           def lambda_handler(event, context):
               presigned_url = s3.generate_presigned_url(
                   ClientMethod='get_object',
-                  Params={'Bucket': '${MetagraphBucket}', 'Key': event.get("merged_key")},
+                  Params={'Bucket': '${MetagraphBucket}', 'Key': event["merged_key"]},
                   ExpiresIn=7*24*60*60  # 7 days
               )
               print(f"Sending notification to topic ${MetagraphNotificationTopic}")
               sns.publish(
                   TopicArn="${MetagraphNotificationTopic}",
                   Message=(
-                      f"Your Metagraph query has completed.\n\n"
+                      f"Your Metagraph query {event['job_id']} has completed.\n\n"
+                      f"Failed tasks: {event['fails']} out of {event['total']}\n\n"
                       f"Download your results here (valid for 7 days):\n\n{presigned_url}"
                   ),
                   Subject="Your Metagraph query has completed"
               )
-              return {"status": "Notification sent"}
 
   MetagraphStateMachine:
     Type: AWS::StepFunctions::StateMachine
@@ -424,7 +428,10 @@ Resources:
               "OutputPath": "$.Payload",
               "Parameters": {
                 "FunctionName": "${MetagraphTaskScheduler.Arn}",
-                "Payload.$": "$"
+                "Payload": {
+                  "arn.$": "$$.Execution.Id",
+                  "query.$": "$"
+                }
               },
               "Next": "WaitJobsDone"
             },
