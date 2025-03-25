@@ -20,7 +20,7 @@ You should use access keys, etc from your AWS access portal.
 3. Deploy the Cloud Formation template:
 
 ```sh
-./deploy-metagraph.sh test@example.com
+scripts/deploy-metagraph.sh test@example.com
 ```
 
 If you want to receive SNS notifications when the query is processed, put your actual email in there.
@@ -36,7 +36,7 @@ This will deploy the following on your AWS:
 4. Upload test query to the s3 bucket:
 
 ```sh
-./upload-query.sh test_query.fasta
+scripts/upload-query.sh data/test_query.fasta
 ```
 
 You can generally upload your own queries by providing `/path/to/query.fasta` instead of `test_query.fasta`.
@@ -44,7 +44,7 @@ You can generally upload your own queries by providing `/path/to/query.fasta` in
 5. Submit a test job:
 
 ```sh
-./start-metagraph-job.sh scheduler-test-input.json
+scripts/start-metagraph-job.sh data/scheduler-test-input.json
 ```
 
 Minimal job definition:
@@ -62,15 +62,3 @@ Additional parameters to be passed to `metagraph` CLI:
 - `num_top_labels` (`inf` by default),
 - `min_kmers_fraction_label` (`0.7` by default),
 - `min_kmers_fraction_graph` (`0.0` by default).
-
-## Development / Maintenance
-
-Update Docker image:
-
-```sh
-docker build -t metagraph-batch .
-docker tag metagraph-batch:latest 043309319928.dkr.ecr.eu-central-2.amazonaws.com/metagraph-batch:latest
-docker push 043309319928.dkr.ecr.eu-central-2.amazonaws.com/metagraph-batch:latest
-```
-
-Deploy Cloud Formation template:
