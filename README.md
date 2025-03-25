@@ -1,15 +1,15 @@
-This is a basic Git to keep track of Metagraph AWS deployment project.
+This is a GitHub to keep track of Metagraph AWS deployment.
 
 # Usage
 
-1. Clone the project:
+### Clone the project
 
 ```sh
 git clone https://github.com/ratschlab/metagraph-aws.git
 cd metagraph-aws
 ```
 
-2. Configure your `aws` tool, if necessary:
+### Configure `aws` tool
 
 ```sh
 aws configure sso
@@ -17,7 +17,7 @@ aws configure sso
 
 You should use access keys, etc from your AWS access portal.
 
-3. Deploy the Cloud Formation template:
+### Deploy the Cloud Formation template
 
 ```sh
 scripts/deploy-metagraph.sh test@example.com
@@ -33,7 +33,7 @@ This will deploy the following on your AWS:
 - SNS topic to receive notifications when the query is fully processed.
   - You need to confirm subscription in your email inbox.
 
-4. Upload test query to the s3 bucket:
+### Upload test query to the s3 bucket
 
 ```sh
 scripts/upload-query.sh examples/test_query.fasta
@@ -41,13 +41,13 @@ scripts/upload-query.sh examples/test_query.fasta
 
 You can generally upload your own queries by providing `/path/to/query.fasta` instead of `test_query.fasta`.
 
-5. Submit a test job:
+### Submit a test job
 
 ```sh
 scripts/start-metagraph-job.sh examples/scheduler-payload.json
 ```
 
-Minimal job definition:
+Minimal job definition (`scheduler-payload.json`):
 
 ```json
 {
