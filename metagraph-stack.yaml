@@ -1,9 +1,25 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: 'Deploys an AWS Batch-based system for Metagraph query execution.'
 
+Parameters:
+  NotificationEmail:
+    Type: String
+    Description: Email address to subscribe to the SNS topic
+
+
 Resources:
   MetagraphBucket:
     Type: AWS::S3::Bucket
+
+  MetagraphNotificationTopic:
+    Type: AWS::SNS::Topic
+
+  MetagraphNotificationSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref MetagraphNotificationTopic
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
 
   ECSInstanceRole:
     Type: AWS::IAM::Role
@@ -44,14 +60,42 @@ Resources:
               - Effect: Allow
                 Action:
                   - 'batch:SubmitJob'
+                  - 'batch:DescribeJobs'
                 Resource: "*"
               - Effect: Allow
                 Action:
                   - 's3:ListBucket'
                   - 's3:GetObject'
+                  - 's3:PutObject'
                 Resource:
                   - 'arn:aws:s3:::metagraph-data-public*'
                   - !Sub 'arn:aws:s3:::${MetagraphBucket}*'
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref MetagraphNotificationTopic
+
+  MetagraphStepFunctionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StepFunctionsInvokeLambda
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !GetAtt MetagraphTaskScheduler.Arn
+                  - !GetAtt MetagraphJobMonitor.Arn
+                  - !GetAtt MetagraphResultAggregator.Arn
 
   MetagraphBatchServiceRole:
     Type: AWS::IAM::Role
@@ -169,7 +213,7 @@ Resources:
               --min-kmers-fraction-graph "$MIN_KMERS_FRACTION_GRAPH" \
               query_sequences.fasta > "result.txt"
 
-            aws s3 cp "result.txt" "$RESULT_URL"
+            aws s3 cp "result.txt" "$RESULT_URL/$AWS_BATCH_JOB_ID.txt"
             
             rm $GRAPH_FILE $ANNO_FILE query_sequences.fasta result.txt
         JobRoleArn: !GetAtt MetagraphBatchJobRole.Arn
@@ -178,7 +222,7 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       Role: !GetAtt MetagraphLambdaRole.Arn
-      Runtime: python3.9
+      Runtime: python3.11
       Handler: index.lambda_handler
       Timeout: 300
       Code:
@@ -218,12 +262,13 @@ Resources:
               job_id = context.aws_request_id
               print(f'Assigning tasks for Job ID {job_id}')
 
+              tasks = []
               for relative_path, files in matching_dirs:
                   if "graph" not in files or "anno" not in files:
                       print(f"Missing required files in {relative_path}. Found: {list(files.keys())}")
                       continue
 
-                  task_id = relative_path.replace("/", "_")
+                  task_name = relative_path.replace("/", "_")
 
                   def file_size(bucket, key): # bytes
                       return s3.head_object(Bucket=bucket, Key=key)["ContentLength"]
@@ -235,9 +280,10 @@ Resources:
 
                   memory_mib = (graph_size + anno_size) // 2**20 + 2**13 # 8 GiB overhead
 
-                  print(f"Scheduling {task_id} at {memory_mib / 1024} GiB memory")
-                  batch.submit_job(
-                      jobName=f"MetagraphQuery-{task_id}",
+                  print(f"Scheduling {task_name} at {memory_mib / 1024} GiB memory")
+
+                  tasks.append(batch.submit_job(
+                      jobName=f"MetagraphQuery-{job_id}-{task_name}"[:128],
                       jobQueue="${MetagraphBatchJobQueue}",
                       jobDefinition="${MetagraphBatchJobDefinition}",
                       containerOverrides={
@@ -247,18 +293,190 @@ Resources:
                             {"name": "GRAPH_FILE", "value": graph_file},
                             {"name": "ANNO_FILE", "value": anno_file},
                             {"name": "QUERY_URL", "value": f"s3://${MetagraphBucket}/{event['query_filename']}"},
-                            {"name": "RESULT_URL", "value": f"s3://${MetagraphBucket}/{job_id}/{task_id}.txt"},
+                            {"name": "RESULT_URL", "value": f"s3://${MetagraphBucket}/{job_id}"},
                             {"name": "QUERY_MODE", "value": event.get("query_mode", "labels")},
                             {"name": "NUM_TOP_LABELS", "value": str(event.get("num_top_labels", "inf"))},
                             {"name": "MIN_KMERS_FRACTION_LABEL", "value": str(event.get("min_kmers_fraction_label", 0.7))},
                             {"name": "MIN_KMERS_FRACTION_GRAPH", "value": str(event.get("min_kmers_fraction_graph", 0.0))}
                         ]
                       }
-                  )
+                  )['jobId'])
 
-              return {"JobID": job_id, "ScheduledTasks": len(matching_dirs)}
+              return {"job_id": job_id, "tasks": tasks}
+
+  MetagraphJobMonitor:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.lambda_handler
+      Role: !GetAtt MetagraphLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+
+          batch = boto3.client('batch')
+
+          def lambda_handler(event, context):
+              job_ids = event.get("tasks", [])
+              job_id = event.get("job_id")
+
+              response = batch.describe_jobs(jobs=job_ids)
+
+              statuses = [job["status"] for job in response["jobs"]]
+              all_done = all(status in ("SUCCEEDED", "FAILED") for status in statuses)
+              any_failed = any(status == "FAILED" for status in statuses)
+
+              return {
+                  "job_id": job_id,
+                  "tasks": job_ids,
+                  "all_done": all_done,
+                  "any_failed": any_failed
+              }
+
+      Runtime: python3.11
+      Timeout: 60
+
+  MetagraphResultAggregator:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.lambda_handler
+      Role: !GetAtt MetagraphLambdaRole.Arn
+      Code:
+        ZipFile: !Sub |
+          import boto3
+          import io
+
+          s3 = boto3.client('s3')
+
+          def lambda_handler(event, context):
+              bucket = "${MetagraphBucket}"
+              job_id = event["job_id"]
+              prefix = f"{job_id}/"
+
+              result = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
+              files = [obj["Key"] for obj in result.get("Contents", []) if obj["Key"].endswith(".txt")]
+
+              combined = io.StringIO()
+
+              for key in files:
+                  obj = s3.get_object(Bucket=bucket, Key=key)
+                  content = obj["Body"].read().decode()
+                  combined.write(f"# {key}\n")
+                  combined.write(content)
+                  combined.write("\n")
+
+              merged_key = f"{job_id}/merged_result.txt"
+              s3.put_object(Bucket=bucket, Key=merged_key, Body=combined.getvalue().encode())
+
+              return {
+                  "job_id": job_id,
+                  "merged_key": merged_key
+              }
+      Runtime: python3.11
+      Timeout: 60
+
+  MetagraphNotifier:
+    Type: AWS::Lambda::Function
+    Properties:
+      Role: !GetAtt MetagraphLambdaRole.Arn
+      Runtime: python3.11
+      Handler: index.lambda_handler
+      Timeout: 60
+      Code:
+        ZipFile: !Sub |
+          import boto3, os
+          from urllib.parse import urlparse
+
+          sns = boto3.client("sns")
+          s3 = boto3.client("s3")
+
+          def lambda_handler(event, context):
+              presigned_url = s3.generate_presigned_url(
+                  ClientMethod='get_object',
+                  Params={'Bucket': '${MetagraphBucket}', 'Key': event.get("merged_key")},
+                  ExpiresIn=7*24*60*60  # 7 days
+              )
+              print(f"Sending notification to topic ${MetagraphNotificationTopic}")
+              sns.publish(
+                  TopicArn=${MetagraphNotificationTopic},
+                  Message=(
+                      f"Your Metagraph query has completed.\n"
+                      f"Download your results here (valid for 7 days):\n{presigned_url}"
+                  ),
+                  Subject="Your Metagraph query has completed"
+              )
+              return {"status": "Notification sent"}
+
+  MetagraphStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      RoleArn: !GetAtt MetagraphStepFunctionsRole.Arn
+      DefinitionString: !Sub |
+        {
+          "StartAt": "InvokeScheduler",
+          "States": {
+            "InvokeScheduler": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "OutputPath": "$.Payload",
+              "Parameters": {
+                "FunctionName": "${MetagraphTaskScheduler.Arn}",
+                "Payload.$": "$"
+              },
+              "Next": "WaitJobsDone"
+            },
+            "WaitJobsDone": {
+              "Type": "Wait",
+              "Seconds": 300,
+              "Next": "CheckJobsStatus"
+            },
+            "CheckJobsStatus": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "OutputPath": "$.Payload",
+              "Parameters": {
+                "FunctionName": "${MetagraphJobMonitor.Arn}",
+                "Payload.$": "$"
+              },
+              "Next": "AreJobsDone"
+            },
+            "AreJobsDone": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.all_done",
+                  "BooleanEquals": true,
+                  "Next": "GatherResults"
+                }
+              ],
+              "Default": "WaitJobsDone"
+            },
+            "GatherResults": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "OutputPath": "$.Payload",
+              "Parameters": {
+                "FunctionName": "${MetagraphResultAggregator.Arn}",
+                "Payload.$": "$"
+              },
+              "Next": "NotifyUser"
+            },
+            "NotifyUser": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Parameters": {
+                "FunctionName": "${MetagraphNotifier.Arn}",
+                "Payload": "$"
+              },
+              "End": true
+            }
+          }
+        }
+
 
 Outputs:
   BucketName:
     Description: 'S3 Bucket for storing queries and their results.'
     Value: !Ref MetagraphBucket
+  StateMachineArn:
+    Description: 'ARN of the Step Functions state machine to trigger queries.'
+    Value: !Ref MetagraphStateMachine
