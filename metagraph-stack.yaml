@@ -206,7 +206,6 @@ Resources:
             aws s3 cp "$DATASET_URL/$ANNO_FILE" .
             aws s3 cp "$QUERY_URL" ./query_sequences.fasta
 
-
             metagraph query \
               -i "$GRAPH_FILE" \
               -a "$ANNO_FILE" \
