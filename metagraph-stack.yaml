@@ -187,6 +187,8 @@ Resources:
     Type: AWS::Batch::JobDefinition
     Properties:
       Type: container
+      RetryStrategy:
+        Attempts: 3
       ContainerProperties:
         Image: 043309319928.dkr.ecr.eu-central-2.amazonaws.com/metagraph-batch:latest
         Vcpus: 1
