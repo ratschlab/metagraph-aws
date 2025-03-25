@@ -1,5 +1,5 @@
 {
     "s3_index_url": "s3://metagraph-data-public/all_sra",
-    "query_filename": "queries/test_query.fasta",
+    "query_filename": "test_query.fasta",
     "index_filter": ".*000[1-5]$"
 }

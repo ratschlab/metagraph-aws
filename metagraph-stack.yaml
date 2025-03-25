@@ -295,7 +295,7 @@ Resources:
                             {"name": "DATASET_URL", "value": f"s3://{bucket}/{prefix}/{relative_path}"},
                             {"name": "GRAPH_FILE", "value": graph_file},
                             {"name": "ANNO_FILE", "value": anno_file},
-                            {"name": "QUERY_URL", "value": f"s3://${MetagraphBucket}/{event['query_filename']}"},
+                            {"name": "QUERY_URL", "value": f"s3://${MetagraphBucket}/queries/{event['query_filename']}"},
                             {"name": "RESULT_URL", "value": f"s3://${MetagraphBucket}/{job_id}"},
                             {"name": "QUERY_MODE", "value": event.get("query_mode", "labels")},
                             {"name": "NUM_TOP_LABELS", "value": str(event.get("num_top_labels", "inf"))},

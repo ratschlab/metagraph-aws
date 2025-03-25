@@ -36,7 +36,7 @@ This will deploy the following on your AWS:
 4. Upload test query to the s3 bucket:
 
 ```sh
-scripts/upload-query.sh data/test_query.fasta
+scripts/upload-query.sh examples/test_query.fasta
 ```
 
 You can generally upload your own queries by providing `/path/to/query.fasta` instead of `test_query.fasta`.
@@ -44,7 +44,7 @@ You can generally upload your own queries by providing `/path/to/query.fasta` in
 5. Submit a test job:
 
 ```sh
-scripts/start-metagraph-job.sh data/scheduler-test-input.json
+scripts/start-metagraph-job.sh examples/scheduler-payload.json
 ```
 
 Minimal job definition:
@@ -52,7 +52,7 @@ Minimal job definition:
 ```json
 {
     "s3_index_url": "s3://metagraph-data-public/all_sra",
-    "query_filename": "queries/test_query.fasta",
+    "query_filename": "test_query.fasta",
     "index_filter": ".*000[1-5]$"
 }
 ```
