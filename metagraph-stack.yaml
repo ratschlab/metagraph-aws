@@ -96,6 +96,7 @@ Resources:
                   - !GetAtt MetagraphTaskScheduler.Arn
                   - !GetAtt MetagraphJobMonitor.Arn
                   - !GetAtt MetagraphResultAggregator.Arn
+                  - !GetAtt MetagraphNotifier.Arn
 
   MetagraphBatchServiceRole:
     Type: AWS::IAM::Role
@@ -384,10 +385,11 @@ Resources:
       Code:
         ZipFile: !Sub |
           import boto3, os
+          from botocore.config import Config
           from urllib.parse import urlparse
 
           sns = boto3.client("sns")
-          s3 = boto3.client("s3")
+          s3 = boto3.client("s3", region_name='eu-central-2', endpoint_url='https://s3.eu-central-2.amazonaws.com')
 
           def lambda_handler(event, context):
               presigned_url = s3.generate_presigned_url(
@@ -397,10 +399,10 @@ Resources:
               )
               print(f"Sending notification to topic ${MetagraphNotificationTopic}")
               sns.publish(
-                  TopicArn=${MetagraphNotificationTopic},
+                  TopicArn="${MetagraphNotificationTopic}",
                   Message=(
-                      f"Your Metagraph query has completed.\n"
-                      f"Download your results here (valid for 7 days):\n{presigned_url}"
+                      f"Your Metagraph query has completed.\n\n"
+                      f"Download your results here (valid for 7 days):\n\n{presigned_url}"
                   ),
                   Subject="Your Metagraph query has completed"
               )
@@ -465,7 +467,7 @@ Resources:
               "Resource": "arn:aws:states:::lambda:invoke",
               "Parameters": {
                 "FunctionName": "${MetagraphNotifier.Arn}",
-                "Payload": "$"
+                "Payload.$": "$"
               },
               "End": true
             }
