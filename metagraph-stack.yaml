@@ -152,8 +152,6 @@ Resources:
           - |
             set -e
 
-            source /opt/conda/bin/activate metagraph_env
-
             mkdir -p /mnt/data
             cd /mnt/data
 
