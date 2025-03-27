@@ -224,7 +224,7 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       Role: !GetAtt MetagraphLambdaRole.Arn
-      Runtime: python3.11
+      Runtime: python3.12
       Handler: index.lambda_handler
       Timeout: 300
       Code:
@@ -336,7 +336,7 @@ Resources:
                   "all_done": all(status in ("SUCCEEDED", "FAILED") for status in statuses)
               }
 
-      Runtime: python3.11
+      Runtime: python3.12
       Timeout: 60
 
   MetagraphResultAggregator:
@@ -355,7 +355,7 @@ Resources:
               bucket = "${MetagraphBucket}"
               job_id = event["job_id"]
 
-              result = s3.list_objects_v2(Bucket=bucket, Prefix=job_id)
+              result = s3.list_objects_v2(Bucket=bucket, Prefix=f"{job_id}/")
               files = [obj["Key"] for obj in result.get("Contents")]
 
               merged = []
@@ -393,14 +393,14 @@ Resources:
                   "total": len(event["tasks"]),
                   "merged_key": merged_key
               }
-      Runtime: python3.11
+      Runtime: python3.12
       Timeout: 60
 
   MetagraphNotifier:
     Type: AWS::Lambda::Function
     Properties:
       Role: !GetAtt MetagraphLambdaRole.Arn
-      Runtime: python3.11
+      Runtime: python3.12
       Handler: index.lambda_handler
       Timeout: 60
       Code:
