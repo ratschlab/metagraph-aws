@@ -1,0 +1,8 @@
+{
+    "s3_index_url": "s3://metagraph-data-public/all_sra",
+    "query_filename": "100_studies_short.fq",
+    "index_filter": ".*000[1-5]$",
+    "query_mode": "matches",
+    "num_top_labels": "10",
+    "min_kmers_fraction_label": "0"
+}

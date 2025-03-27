@@ -354,21 +354,37 @@ Resources:
           def lambda_handler(event, context):
               bucket = "${MetagraphBucket}"
               job_id = event["job_id"]
-              prefix = f"{job_id}/"
 
-              result = s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
-              files = [obj["Key"] for obj in result.get("Contents", []) if obj["Key"].endswith(".txt")]
+              result = s3.list_objects_v2(Bucket=bucket, Prefix=job_id)
+              files = [obj["Key"] for obj in result.get("Contents")]
+
+              merged = []
+              query_mode = event["query_mode"]
+              for key in files:
+                  content = s3.get_object(Bucket=bucket, Key=key)["Body"].read().decode()
+                  data = [line.split('\t') for line in content.split('\n')[:-1]]
+                  for idx, name, *matches in data:
+                      idx = int(idx)
+                      if idx == len(merged):
+                          merged.append([name, []])
+                      if query_mode == 'labels':
+                          if matches[0]:
+                              merged[idx][1] += matches
+                      elif query_mode == 'matches':
+                          for match in matches:
+                              label, count = match.split(':')
+                              merged[idx][1].append((int(count), label))
+                      else:
+                          raise ValueError(f"Invalid query mode: {query_mode}. Must be one of 'labels' or 'matches'.")
 
               combined = io.StringIO()
+              for idx, (name, matches) in enumerate(merged):
+                  if query_mode == 'labels':
+                      combined.write(f"{idx}\t{name}\t{':'.join(matches)}\n")
+                  elif query_mode == 'matches':
+                      combined.write(f"{idx}\t{name}\t{'\t'.join([f'{label}:{count}' for count, label in reversed(sorted(matches))])}\n")
 
-              for key in files:
-                  obj = s3.get_object(Bucket=bucket, Key=key)
-                  content = obj["Body"].read().decode()
-                  combined.write(f"# {key}\n")
-                  combined.write(content)
-                  combined.write("\n")
-
-              merged_key = f"{job_id}/merged_result.txt"
+              merged_key = f"{job_id}-result.txt"
               s3.put_object(Bucket=bucket, Key=merged_key, Body=combined.getvalue().encode())
 
               return {
