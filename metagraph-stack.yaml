@@ -355,37 +355,89 @@ Resources:
               bucket = "${MetagraphBucket}"
               job_id = event["job_id"]
 
+              # List the objects for the current job_id
               result = s3.list_objects_v2(Bucket=bucket, Prefix=f"{job_id}/")
-              files = [obj["Key"] for obj in result.get("Contents")]
+              files = [s3.get_object(Bucket=bucket, Key=obj["Key"])["Body"] for obj in result.get("Contents", [])]
+              file_iterators = zip(*[file.iter_lines() for file in files])
 
-              merged = []
-              query_mode = event["query_mode"]
-              for key in files:
-                  content = s3.get_object(Bucket=bucket, Key=key)["Body"].read().decode()
-                  data = [line.split('\t') for line in content.split('\n')[:-1]]
-                  for idx, name, *matches in data:
-                      idx = int(idx)
-                      if idx == len(merged):
-                          merged.append([name, []])
-                      if query_mode == 'labels':
-                          if matches[0]:
-                              merged[idx][1] += matches
-                      elif query_mode == 'matches':
+              # Initialize the multipart upload
+              merged_key = f"{job_id}-result.txt"
+              multipart_upload = s3.create_multipart_upload(Bucket=bucket, Key=merged_key)
+              upload_id = multipart_upload['UploadId']
+              part_number = 1
+              parts = []
+
+              # Size threshold for each part
+              part_size_threshold = 32 * 2**20  # 32 MiB
+              current_buffer = io.BytesIO()  # Buffer to hold data before uploading
+              current_size = 0
+
+              def upload_part():
+                  nonlocal merged_key, upload_id, part_number, parts
+                  nonlocal part_size_threshold, current_buffer, current_size
+                  # Reset the buffer pointer to the beginning to upload the content
+                  current_buffer.seek(0)
+
+                  # Upload the buffered part to S3
+                  print(f"Uploading part {part_number}, size: {current_size / 2**20} MiB")
+                  part = s3.upload_part(
+                      Bucket=bucket,
+                      Key=merged_key,
+                      PartNumber=part_number,
+                      UploadId=upload_id,
+                      Body=current_buffer
+                  )
+                  parts.append({'PartNumber': part_number, 'ETag': part['ETag']})
+                  part_number += 1  # Increment part number for the next part
+
+                  # Reset the buffer for the next part
+                  current_buffer = io.BytesIO()
+                  current_size = 0
+
+              mode = event["query_mode"]
+              if mode not in ['labels', 'matches']:
+                  raise ValueError(f"Invalid query mode: {mode}")
+              
+              # Process the lines and buffer them
+              for idx, lines in enumerate(file_iterators):
+                  Name = ''
+                  Matches = []
+                  for _, name, *matches in map(lambda x: x.decode().split('\t'), lines):
+                      if not Name:
+                          Name = name
+                      assert name == Name
+                      if mode == 'labels' and matches[0]:
+                          Matches += matches
+                      elif mode == 'matches':
                           for match in matches:
                               label, count = match.split(':')
-                              merged[idx][1].append((int(count), label))
-                      else:
-                          raise ValueError(f"Invalid query mode: {query_mode}. Must be one of 'labels' or 'matches'.")
+                              Matches.append((int(count), label))
 
-              combined = io.StringIO()
-              for idx, (name, matches) in enumerate(merged):
-                  if query_mode == 'labels':
-                      combined.write(f"{idx}\t{name}\t{':'.join(matches)}\n")
-                  elif query_mode == 'matches':
-                      combined.write(f"{idx}\t{name}\t{'\t'.join([f'{label}:{count}' for count, label in reversed(sorted(matches))])}\n")
+                  # Prepare the content for the current part
+                  if mode == 'labels':
+                      content = f"{idx}\t{Name}\t{':'.join(Matches)}\n"
+                  elif mode == 'matches':
+                      content = f"{idx}\t{Name}\t{'\t'.join([f'{label}:{count}' for count, label in reversed(sorted(Matches))])}\n"
 
-              merged_key = f"{job_id}-result.txt"
-              s3.put_object(Bucket=bucket, Key=merged_key, Body=combined.getvalue().encode())
+                  # Write the content to the buffer
+                  current_buffer.write(content.encode())
+                  current_size += len(content.encode())
+
+                  # If the buffer has reached the size threshold, upload it as a part
+                  if current_size >= part_size_threshold:
+                      upload_part()
+
+              # If there is any remaining data in the buffer after processing all lines, upload it
+              if current_size > 0:
+                  upload_part()
+
+              # Complete the multipart upload after all parts are uploaded
+              s3.complete_multipart_upload(
+                  Bucket=bucket,
+                  Key=merged_key,
+                  UploadId=upload_id,
+                  MultipartUpload={'Parts': parts}
+              )
 
               return {
                   "job_id": job_id,
@@ -394,7 +446,7 @@ Resources:
                   "merged_key": merged_key
               }
       Runtime: python3.12
-      Timeout: 60
+      Timeout: 120
 
   MetagraphNotifier:
     Type: AWS::Lambda::Function
