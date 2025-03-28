@@ -224,7 +224,7 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       Role: !GetAtt MetagraphLambdaRole.Arn
-      Runtime: python3.12
+      Runtime: python3.13
       Handler: index.lambda_handler
       Timeout: 300
       Code:
@@ -325,8 +325,17 @@ Resources:
 
           def lambda_handler(event, context):
               tasks = event["tasks"]
-              response = batch.describe_jobs(jobs=tasks)
-              statuses = [job["status"] for job in response["jobs"]]
+              
+              # Split the task list into chunks of at most 100
+              def chunked(iterable, size):
+                  for i in range(0, len(iterable), size):
+                      yield iterable[i:i + size]
+
+              statuses = []
+              for chunk in chunked(tasks, 100):
+                  response = batch.describe_jobs(jobs=chunk)
+                  statuses.extend(job["status"] for job in response["jobs"])
+
               return {
                   "query_mode": event["query_mode"],
                   "job_id": event["job_id"],
@@ -335,8 +344,7 @@ Resources:
                   "fails": sum(status == "FAILED" for status in statuses),
                   "all_done": all(status in ("SUCCEEDED", "FAILED") for status in statuses)
               }
-
-      Runtime: python3.12
+      Runtime: python3.13
       Timeout: 60
 
   MetagraphResultAggregator:
@@ -445,14 +453,14 @@ Resources:
                   "total": len(event["tasks"]),
                   "merged_key": merged_key
               }
-      Runtime: python3.12
+      Runtime: python3.13
       Timeout: 120
 
   MetagraphNotifier:
     Type: AWS::Lambda::Function
     Properties:
       Role: !GetAtt MetagraphLambdaRole.Arn
-      Runtime: python3.12
+      Runtime: python3.13
       Handler: index.lambda_handler
       Timeout: 60
       Code:
