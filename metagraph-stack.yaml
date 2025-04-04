@@ -8,19 +8,8 @@ Parameters:
 
 
 Resources:
-  MetagraphBucket:
-    Type: AWS::S3::Bucket
 
-  MetagraphNotificationTopic:
-    Type: AWS::SNS::Topic
-
-  MetagraphNotificationSubscription:
-    Type: AWS::SNS::Subscription
-    Properties:
-      TopicArn: !Ref MetagraphNotificationTopic
-      Protocol: email
-      Endpoint: !Ref NotificationEmail
-
+### Roles and profiles
   ECSInstanceRole:
     Type: AWS::IAM::Role
     Properties:
@@ -35,6 +24,21 @@ Resources:
               - "sts:AssumeRole"
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+      Policies:
+        - PolicyName: MountS3ReadAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource:
+                  - arn:aws:s3:::metagraph-data-public
+                  - arn:aws:s3:::metagraph-data-public/*
+                  - !Sub arn:aws:s3:::${MetagraphBucket}
+                  - !Sub arn:aws:s3:::${MetagraphBucket}/*
 
   ECSInstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -98,19 +102,6 @@ Resources:
                   - !GetAtt MetagraphResultAggregator.Arn
                   - !GetAtt MetagraphNotifier.Arn
 
-  MetagraphBatchServiceRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: batch.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSBatchServiceRole
-
   MetagraphBatchJobRole:
     Type: AWS::IAM::Role
     Properties:
@@ -140,29 +131,179 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:s3:::${MetagraphBucket}/*'
 
+# Profile and role for building AMI
+  MetagraphInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref MetagraphInstanceRole]
+
+  MetagraphInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/AWSImageBuilderFullAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+
+### Metagraph + Mountpoint AMI
+  MountpointS3Component:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: MountpointS3Setup
+      Version: 1.0.3
+      Platform: Linux
+      Data: |
+        name: MountpointS3Setup
+        description: Installs mount-s3 and Metagraph
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: ReleaseUpgrade
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - dnf upgrade --releasever=latest -y
+              - name: InstallMountS3
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - yum install -y wget
+                    - wget https://s3.amazonaws.com/mountpoint-s3-release/latest/x86_64/mount-s3.rpm
+                    - yum install -y ./mount-s3.rpm
+              - name: InstallDependencies
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - yum install -y git gcc14-c++ cmake boost-devel boost-static zlib-devel bzip2-devel automake autoconf libtool libatomic libatomic-static
+                    - export CC=/usr/bin/gcc14-gcc
+                    - export CXX=/usr/bin/gcc14-g++
+                    - git clone https://github.com/ebiggers/libdeflate.git
+                    - mkdir libdeflate/build && cd libdeflate/build
+                    - cmake ..
+                    - make -j$(nproc)
+                    - make install
+              - name: CloneMetagraph
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - git clone --recursive https://github.com/ratschlab/metagraph.git /opt/metagraph
+              - name: BuildSDSL
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - export CC=/usr/bin/gcc14-gcc
+                    - export CXX=/usr/bin/gcc14-g++
+                    - pushd /opt/metagraph/metagraph/external-libraries/sdsl-lite
+                    - sudo env CC=$CC CXX=$CXX ./install.sh $PWD
+                    - popd
+              - name: BuildMetagraph
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - export CC=/usr/bin/gcc14-gcc
+                    - export CXX=/usr/bin/gcc14-g++
+                    - mkdir -p /opt/metagraph/metagraph/build
+                    - cd /opt/metagraph/metagraph/build
+                    - cmake -DCMAKE_INSTALL_PREFIX=/opt/metagraph/install ..
+                    - make -j$(nproc)
+                    - make install
+
+  MetagraphInfraConfig:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: MetagraphInfraConfig
+      InstanceTypes: [t3.2xlarge]
+      InstanceProfileName: !Ref MetagraphInstanceProfile
+      TerminateInstanceOnFailure: true
+      Logging:
+        S3Logs:
+          S3BucketName: !Ref MetagraphBucket
+
+  MetagraphImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: MetagraphImageRecipe
+      Version: 1.0.3
+      ParentImage: arn:aws:imagebuilder:eu-central-2:aws:image/amazon-linux-2023-ecs-optimized-x86/x.x.x
+      Components:
+        - ComponentArn: !Ref MountpointS3Component
+
+  MetagraphImagePipeline:
+    Type: AWS::ImageBuilder::Image
+    Properties:
+      ImageRecipeArn: !Ref MetagraphImageRecipe
+      InfrastructureConfigurationArn: !Ref MetagraphInfraConfig
+      ImageTestsConfiguration:
+        ImageTestsEnabled: false
+
+### Main stack bucket
+  MetagraphBucket:
+    Type: AWS::S3::Bucket
+
+### SNS topic for notifications
+  MetagraphNotificationTopic:
+    Type: AWS::SNS::Topic
+
+  MetagraphNotificationSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref MetagraphNotificationTopic
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+
+### Launch template for container service with s3 bucket mounting
   MetagraphLaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
       LaunchTemplateData:
-        BlockDeviceMappings:
-          - DeviceName: /dev/xvda
-            Ebs:
-              VolumeSize: 256
-              VolumeType: gp3
-              DeleteOnTermination: true
+        IamInstanceProfile:
+          Name: !Ref ECSInstanceProfile
+        ImageId: !GetAtt MetagraphImagePipeline.ImageId
+        UserData:
+          Fn::Base64: !Sub |
+            MIME-Version: 1.0
+            Content-Type: multipart/mixed; boundary="==BOUNDARY=="
+
+            --==BOUNDARY==
+            Content-Type: text/cloud-config; charset="us-ascii"
+
+            cloud_final_modules:
+              - [scripts-user, always]
+
+            --==BOUNDARY==
+            Content-Type: text/x-shellscript; charset="us-ascii"
+
+            #!/bin/bash
+            set -e
+
+            mkdir -p /mnt/data
+            mkdir -p /mnt/bucket
+
+            mount-s3 metagraph-data-public /mnt/data
+            mount-s3 ${MetagraphBucket} /mnt/bucket
+
+            --==BOUNDARY==--
+
 
   MetagraphBatchComputeEnvironment:
     Type: AWS::Batch::ComputeEnvironment
     Properties:
       Type: MANAGED
       State: ENABLED
-      ServiceRole: !GetAtt MetagraphBatchServiceRole.Arn
       ComputeResources:
         Type: EC2
         MinvCpus: 0
-        MaxvCpus: 256
+        MaxvCpus: 512
         InstanceTypes:
-          - r5.4xlarge # 16 vCPU, 128 GiB RAM
+          - r6i.4xlarge # 16 vCPU, 128 GiB RAM
         Subnets:
           - subnet-064a41e7e9f7821a8 # eu-central-2a
           - subnet-0247650ef94e8aa42 # eu-central-2b
@@ -190,34 +331,56 @@ Resources:
       RetryStrategy:
         Attempts: 3
       ContainerProperties:
-        Image: 043309319928.dkr.ecr.eu-central-2.amazonaws.com/metagraph-batch:latest
-        Vcpus: 1
+        Image: public.ecr.aws/amazonlinux/amazonlinux:2023
+        Vcpus: 4
         Memory: 32768
+        Volumes:
+          - Name: metagraph-data
+            Host:
+              SourcePath: /mnt/data
+          - Name: metagraph-bucket
+            Host:
+              SourcePath: /mnt/bucket
+          - Name: metagraph-bin
+            Host:
+              SourcePath: /opt/metagraph
+          - Name: libdeflate
+            Host:
+              SourcePath: /usr/local/lib64
+          - Name: lib64
+            Host:
+              SourcePath: /usr/lib64
+        MountPoints:
+          - SourceVolume: metagraph-data
+            ContainerPath: /mnt/data
+          - SourceVolume: metagraph-bucket
+            ContainerPath: /mnt/bucket
+          - SourceVolume: metagraph-bin
+            ContainerPath: /opt/metagraph
+          - SourceVolume: libdeflate
+            ContainerPath: /usr/local/lib64
+          - SourceVolume: lib64
+            ContainerPath: /usr/lib64
         Command:
           - "/bin/bash"
           - "-c"
           - |
             set -e
 
-            mkdir -p /mnt/data
-            cd /mnt/data
-
-            aws s3 cp "$DATASET_URL/$GRAPH_FILE" .
-            aws s3 cp "$DATASET_URL/$ANNO_FILE" .
-            aws s3 cp "$QUERY_URL" ./query_sequences.fasta
+            export PATH="/opt/metagraph/metagraph/build:$PATH"
+            export LD_LIBRARY_PATH="/usr/local/lib64:/usr/lib64:$LD_LIBRARY_PATH"
 
             metagraph query \
-              -i "$GRAPH_FILE" \
-              -a "$ANNO_FILE" \
+              -i "/mnt/data/$DATASET/$GRAPH_FILE" \
+              -a "/mnt/data/$DATASET/$ANNO_FILE" \
               --query-mode "$QUERY_MODE" \
               --num-top-labels "$NUM_TOP_LABELS" \
               --min-kmers-fraction-label "$MIN_KMERS_FRACTION_LABEL" \
               --min-kmers-fraction-graph "$MIN_KMERS_FRACTION_GRAPH" \
-              query_sequences.fasta > "result.txt"
+              "/mnt/bucket/$QUERY" > result.txt
 
-            aws s3 cp "result.txt" "$RESULT_URL/$AWS_BATCH_JOB_ID.txt"
-            
-            rm $GRAPH_FILE $ANNO_FILE query_sequences.fasta result.txt
+            mkdir -p "/mnt/bucket/$JOB_ID"
+            cp result.txt "/mnt/bucket/$JOB_ID/$AWS_BATCH_JOB_ID.txt"
         JobRoleArn: !GetAtt MetagraphBatchJobRole.Arn
 
   MetagraphTaskScheduler:
@@ -251,13 +414,12 @@ Resources:
               return directories
 
           def lambda_handler(event, context):
-              base_url = event["query"]["s3_index_url"].rstrip('/') + '/'
-              bucket, prefix = base_url.replace("s3://", "").split("/", 1)
-              prefix = prefix.rstrip('/')
+              prefix = event["query"]["index_prefix"].rstrip('/')
+              bucket = 'metagraph-data-public'
 
               all_directories = list_indices(bucket, prefix)
               regex_pattern = event["query"].get("index_filter", ".*")
-              print(f'Found {len(all_directories)} indices in {base_url}')
+              print(f'Found {len(all_directories)} indices in {prefix}')
               matching_dirs = [(path, files) for path, files in all_directories.items() if re.match(regex_pattern, path)]
               print(f'{len(matching_dirs)} indices matched against "{regex_pattern}"')
 
@@ -282,7 +444,7 @@ Resources:
                   graph_size = file_size(bucket, f"{prefix}/{relative_path}/{graph_file}")
                   anno_size = file_size(bucket, f"{prefix}/{relative_path}/{anno_file}")
 
-                  memory_mib = (graph_size + anno_size) // 2**20 + 2**13 # 8 GiB overhead
+                  memory_mib = (graph_size + anno_size) // 2**20 + 8*1024 # 8 GiB overhead
 
                   print(f"Scheduling {task_name} at {memory_mib / 1024} GiB memory")
 
@@ -293,11 +455,11 @@ Resources:
                       containerOverrides={
                           "memory": memory_mib,
                           "environment": [
-                            {"name": "DATASET_URL", "value": f"s3://{bucket}/{prefix}/{relative_path}"},
+                            {"name": "DATASET", "value": f"{prefix}/{relative_path}"},
                             {"name": "GRAPH_FILE", "value": graph_file},
                             {"name": "ANNO_FILE", "value": anno_file},
-                            {"name": "QUERY_URL", "value": f"s3://${MetagraphBucket}/queries/{event['query']['query_filename']}"},
-                            {"name": "RESULT_URL", "value": f"s3://${MetagraphBucket}/{job_id}"},
+                            {"name": "QUERY", "value": f"queries/{event['query']['query_filename']}"},
+                            {"name": "JOB_ID", "value": job_id},
                             {"name": "QUERY_MODE", "value": query_mode},
                             {"name": "NUM_TOP_LABELS", "value": str(event["query"].get("num_top_labels", "inf"))},
                             {"name": "MIN_KMERS_FRACTION_LABEL", "value": str(event["query"].get("min_kmers_fraction_label", 0.7))},
@@ -356,6 +518,9 @@ Resources:
         ZipFile: !Sub |
           import boto3
           import io
+          import itertools as it
+
+          from concurrent.futures import ThreadPoolExecutor
 
           s3 = boto3.client('s3')
 
@@ -365,8 +530,12 @@ Resources:
 
               # List the objects for the current job_id
               result = s3.list_objects_v2(Bucket=bucket, Prefix=f"{job_id}/")
-              files = [s3.get_object(Bucket=bucket, Key=obj["Key"])["Body"] for obj in result.get("Contents", [])]
-              file_iterators = zip(*[file.iter_lines() for file in files])
+              keys = [obj["Key"] for obj in result.get("Contents", [])]
+
+              with ThreadPoolExecutor(max_workers=32) as executor:
+                  files = list(executor.map(lambda key: s3.get_object(Bucket=bucket, Key=key)["Body"], keys))
+
+              file_iterators = [file.iter_lines() for file in files]
 
               # Initialize the multipart upload
               merged_key = f"{job_id}-result.txt"
@@ -407,7 +576,12 @@ Resources:
                   raise ValueError(f"Invalid query mode: {mode}")
               
               # Process the lines and buffer them
-              for idx, lines in enumerate(file_iterators):
+              for idx in it.count(0):
+                  with ThreadPoolExecutor(max_workers=32) as executor:
+                      lines = list(executor.map(lambda iterator: next(iterator, None), file_iterators))
+                  
+                  if not lines or not lines[0]:
+                      break
                   Name = ''
                   Matches = []
                   for _, name, *matches in map(lambda x: x.decode().split('\t'), lines):
@@ -454,7 +628,8 @@ Resources:
                   "merged_key": merged_key
               }
       Runtime: python3.13
-      Timeout: 120
+      MemorySize: 256
+      Timeout: 900
 
   MetagraphNotifier:
     Type: AWS::Lambda::Function
