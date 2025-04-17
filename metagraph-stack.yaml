@@ -90,6 +90,15 @@ Resources:
               Service: states.amazonaws.com
             Action: sts:AssumeRole
       Policies:
+        - PolicyName: StepFunctionsBatchAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - batch:SubmitJob
+                  - batch:DescribeJobs
+                Resource: "*"
         - PolicyName: StepFunctionsInvokeLambda
           PolicyDocument:
             Version: "2012-10-17"
@@ -98,9 +107,19 @@ Resources:
                 Action: lambda:InvokeFunction
                 Resource:
                   - !GetAtt MetagraphTaskScheduler.Arn
-                  - !GetAtt MetagraphJobMonitor.Arn
-                  - !GetAtt MetagraphResultAggregator.Arn
                   - !GetAtt MetagraphNotifier.Arn
+        - PolicyName: StepFunctionsEventBridgePermissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - events:PutRule
+                  - events:PutTargets
+                  - events:DescribeRule
+                  - events:DeleteRule
+                  - events:RemoveTargets
+                Resource: "*"
 
   MetagraphBatchJobRole:
     Type: AWS::IAM::Role
@@ -120,15 +139,11 @@ Resources:
               - Effect: Allow
                 Action:
                   - 's3:GetObject'
+                  - 's3:PutObject'
                   - 's3:ListBucket'
                 Resource:
                   - 'arn:aws:s3:::metagraph-data-public*'
                   - !Sub 'arn:aws:s3:::${MetagraphBucket}'
-                  - !Sub 'arn:aws:s3:::${MetagraphBucket}/*'
-              - Effect: Allow
-                Action:
-                  - 's3:PutObject'
-                Resource:
                   - !Sub 'arn:aws:s3:::${MetagraphBucket}/*'
 
 # Profile and role for building AMI
@@ -324,6 +339,93 @@ Resources:
         - Order: 1
           ComputeEnvironment: !Ref MetagraphBatchComputeEnvironment
 
+  MetagraphMergeJobDefinition:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      Type: container
+      RetryStrategy:
+        Attempts: 1
+      ContainerProperties:
+        Image: public.ecr.aws/amazonlinux/amazonlinux:2023
+        Vcpus: 4
+        Memory: 8192
+        Volumes:
+          - Name: metagraph-bucket
+            Host:
+              SourcePath: /mnt/bucket
+        MountPoints:
+          - SourceVolume: metagraph-bucket
+            ContainerPath: /mnt/bucket
+        Command:
+          - python3
+          - -c
+          - |
+              import os
+              import shutil
+              import itertools as it
+              from contextlib import ExitStack
+              from concurrent.futures import ThreadPoolExecutor
+
+              BUCKET_MOUNT = '/mnt/bucket'
+              job_id = os.environ["JOB_ID"]
+              mode = os.environ["QUERY_MODE"]
+
+              if mode not in ['labels', 'matches']:
+                  raise ValueError(f"Invalid query mode: {mode}")
+
+              job_path = os.path.join(BUCKET_MOUNT, job_id)
+              merged_key = f"{job_id}-result.txt"
+
+              with ExitStack() as stack:
+                  merged_file = stack.enter_context(open(merged_key, 'w'))
+
+                  print(f"Merging results from {job_path}...")
+                  with ThreadPoolExecutor() as executor:
+                      file_paths = [os.path.join(job_path, f) for f in os.listdir(job_path)]
+                      files = list(executor.map(lambda path: stack.enter_context(open(path, 'r')), file_paths))
+                  print(f"Found {len(files)} files to merge...")
+
+                  for Idx in it.count(0):
+                      if Idx and Idx % 1000 == 0:
+                          print(f"Processed {Idx} lines...")
+                      with ThreadPoolExecutor() as executor:
+                          lines = list(executor.map(lambda f: f.readline() or None, files))
+
+                      if not lines or not all(lines):
+                          break
+
+                      Name = ''
+                      Matches = []
+
+                      for line in lines:
+                          idx, name, *matches = line.strip().split('\t')
+                          if not Name:
+                              Name = name
+                          assert name == Name and int(idx) == Idx
+
+                          if mode == 'labels':
+                              Matches += matches
+                          elif mode == 'matches':
+                              for match in matches:
+                                  label, count = match.split(':')
+                                  Matches.append((int(count), label))
+
+                      if mode == 'labels':
+                          content = f"{Idx}\t{Name}\t{':'.join(Matches)}\n"
+                      elif mode == 'matches':
+                          match_str = '\t'.join(f'{label}:{count}' for count, label in reversed(sorted(Matches)))
+                          content = f"{Idx}\t{Name}\t{match_str}\n"
+
+                      merged_file.write(content)
+
+              print(f"Copying {merged_key} to the s3 bucket...")
+              with open(merged_key, 'rb') as src, open(os.path.join(BUCKET_MOUNT, merged_key), 'wb') as dst:
+                dst.write(src.read())
+        Environment:
+          - Name: PYTHONUNBUFFERED
+            Value: "1"
+        JobRoleArn: !GetAtt MetagraphBatchJobRole.Arn
+
   MetagraphBatchJobDefinition:
     Type: AWS::Batch::JobDefinition
     Properties:
@@ -392,11 +494,11 @@ Resources:
       Timeout: 300
       Code:
         ZipFile: !Sub |
-          import boto3, json, os, uuid, re, math
+          import boto3
+          import re
           from collections import defaultdict
 
           s3 = boto3.client('s3')
-          batch = boto3.client('batch')
 
           def list_indices(bucket, prefix):
               prefix = prefix.strip('/').rstrip('/')
@@ -413,223 +515,56 @@ Resources:
                           directories['/'.join(splt[:-1])[len(prefix):]]['graph' if is_graph else 'anno'] = splt[-1]
               return directories
 
+          def file_size(bucket, key): # bytes
+              return s3.head_object(Bucket=bucket, Key=key)["ContentLength"]
+
           def lambda_handler(event, context):
               prefix = event["query"]["index_prefix"].rstrip('/')
               bucket = 'metagraph-data-public'
 
               all_directories = list_indices(bucket, prefix)
               regex_pattern = event["query"].get("index_filter", ".*")
-              print(f'Found {len(all_directories)} indices in {prefix}')
-              matching_dirs = [(path, files) for path, files in all_directories.items() if re.match(regex_pattern, path)]
-              print(f'{len(matching_dirs)} indices matched against "{regex_pattern}"')
+              matching_dirs = [
+                  (path, files)
+                  for path, files in all_directories.items()
+                  if re.match(regex_pattern, path)
+              ]
 
               job_id = event["arn"].split(":")[-1] if "arn" in event else context.aws_request_id
               query_mode = event["query"].get("query_mode", "labels")
 
-              print(f'Assigning tasks for Job ID {job_id}')
+              print(f"Found {len(all_directories)} directories, {len(matching_dirs)} matched '{regex_pattern}'")
 
               tasks = []
               for relative_path, files in matching_dirs:
                   if "graph" not in files or "anno" not in files:
-                      print(f"Missing required files in {relative_path}. Found: {list(files.keys())}")
+                      print(f"Skipping {relative_path}, missing required files: {list(files.keys())}")
                       continue
-
-                  task_name = relative_path.replace("/", "_")
-
-                  def file_size(bucket, key): # bytes
-                      return s3.head_object(Bucket=bucket, Key=key)["ContentLength"]
 
                   graph_file = files["graph"]
                   anno_file = files["anno"]
                   graph_size = file_size(bucket, f"{prefix}/{relative_path}/{graph_file}")
                   anno_size = file_size(bucket, f"{prefix}/{relative_path}/{anno_file}")
+                  memory_mib = (graph_size + anno_size) // 2**20 + 8*1024
 
-                  memory_mib = (graph_size + anno_size) // 2**20 + 8*1024 # 8 GiB overhead
-
-                  print(f"Scheduling {task_name} at {memory_mib / 1024} GiB memory")
-
-                  tasks.append(batch.submit_job(
-                      jobName=f"MetagraphQuery-{job_id}-{task_name}"[:128],
-                      jobQueue="${MetagraphBatchJobQueue}",
-                      jobDefinition="${MetagraphBatchJobDefinition}",
-                      containerOverrides={
-                          "memory": memory_mib,
-                          "environment": [
-                            {"name": "DATASET", "value": f"{prefix}/{relative_path}"},
-                            {"name": "GRAPH_FILE", "value": graph_file},
-                            {"name": "ANNO_FILE", "value": anno_file},
-                            {"name": "QUERY", "value": f"queries/{event['query']['query_filename']}"},
-                            {"name": "JOB_ID", "value": job_id},
-                            {"name": "QUERY_MODE", "value": query_mode},
-                            {"name": "NUM_TOP_LABELS", "value": str(event["query"].get("num_top_labels", "inf"))},
-                            {"name": "MIN_KMERS_FRACTION_LABEL", "value": str(event["query"].get("min_kmers_fraction_label", 0.7))},
-                            {"name": "MIN_KMERS_FRACTION_GRAPH", "value": str(event["query"].get("min_kmers_fraction_graph", 0.0))}
-                        ]
-                      }
-                  )['jobId'])
+                  task_name = relative_path.replace("/", "_")
+                  tasks.append({
+                      "jobName": f"Query-{job_id}-{task_name}"[:128],
+                      "dataset": f"{prefix}/{relative_path}",
+                      "graph_file": graph_file,
+                      "anno_file": anno_file,
+                      "memory_mib": memory_mib,
+                  })
 
               return {
-                  "query_mode": query_mode,
                   "job_id": job_id,
+                  "query_mode": query_mode,
+                  "query": f"queries/{event['query']['query_filename']}",
+                  "num_top_labels": str(event["query"].get("num_top_labels", "inf")),
+                  "min_kmers_fraction_label": str(event["query"].get("min_kmers_fraction_label", 0.7)),
+                  "min_kmers_fraction_graph": str(event["query"].get("min_kmers_fraction_graph", 0.0)),
                   "tasks": tasks
               }
-
-  MetagraphJobMonitor:
-    Type: AWS::Lambda::Function
-    Properties:
-      Handler: index.lambda_handler
-      Role: !GetAtt MetagraphLambdaRole.Arn
-      Code:
-        ZipFile: |
-          import boto3
-
-          batch = boto3.client('batch')
-
-          def lambda_handler(event, context):
-              tasks = event["tasks"]
-              
-              # Split the task list into chunks of at most 100
-              def chunked(iterable, size):
-                  for i in range(0, len(iterable), size):
-                      yield iterable[i:i + size]
-
-              statuses = []
-              for chunk in chunked(tasks, 100):
-                  response = batch.describe_jobs(jobs=chunk)
-                  statuses.extend(job["status"] for job in response["jobs"])
-
-              return {
-                  "query_mode": event["query_mode"],
-                  "job_id": event["job_id"],
-                  "tasks": tasks,
-                  "total": len(statuses),
-                  "fails": sum(status == "FAILED" for status in statuses),
-                  "all_done": all(status in ("SUCCEEDED", "FAILED") for status in statuses)
-              }
-      Runtime: python3.13
-      Timeout: 60
-
-  MetagraphResultAggregator:
-    Type: AWS::Lambda::Function
-    Properties:
-      Handler: index.lambda_handler
-      Role: !GetAtt MetagraphLambdaRole.Arn
-      Code:
-        ZipFile: !Sub |
-          import boto3
-          import io
-          import itertools as it
-
-          from concurrent.futures import ThreadPoolExecutor
-
-          s3 = boto3.client('s3')
-
-          def lambda_handler(event, context):
-              bucket = "${MetagraphBucket}"
-              job_id = event["job_id"]
-
-              # List the objects for the current job_id
-              result = s3.list_objects_v2(Bucket=bucket, Prefix=f"{job_id}/")
-              keys = [obj["Key"] for obj in result.get("Contents", [])]
-
-              with ThreadPoolExecutor(max_workers=32) as executor:
-                  files = list(executor.map(lambda key: s3.get_object(Bucket=bucket, Key=key)["Body"], keys))
-
-              file_iterators = [file.iter_lines() for file in files]
-
-              # Initialize the multipart upload
-              merged_key = f"{job_id}-result.txt"
-              multipart_upload = s3.create_multipart_upload(Bucket=bucket, Key=merged_key)
-              upload_id = multipart_upload['UploadId']
-              part_number = 1
-              parts = []
-
-              # Size threshold for each part
-              part_size_threshold = 32 * 2**20  # 32 MiB
-              current_buffer = io.BytesIO()  # Buffer to hold data before uploading
-              current_size = 0
-
-              def upload_part():
-                  nonlocal merged_key, upload_id, part_number, parts
-                  nonlocal part_size_threshold, current_buffer, current_size
-                  # Reset the buffer pointer to the beginning to upload the content
-                  current_buffer.seek(0)
-
-                  # Upload the buffered part to S3
-                  print(f"Uploading part {part_number}, size: {current_size / 2**20} MiB")
-                  part = s3.upload_part(
-                      Bucket=bucket,
-                      Key=merged_key,
-                      PartNumber=part_number,
-                      UploadId=upload_id,
-                      Body=current_buffer
-                  )
-                  parts.append({'PartNumber': part_number, 'ETag': part['ETag']})
-                  part_number += 1  # Increment part number for the next part
-
-                  # Reset the buffer for the next part
-                  current_buffer = io.BytesIO()
-                  current_size = 0
-
-              mode = event["query_mode"]
-              if mode not in ['labels', 'matches']:
-                  raise ValueError(f"Invalid query mode: {mode}")
-              
-              # Process the lines and buffer them
-              for idx in it.count(0):
-                  with ThreadPoolExecutor(max_workers=32) as executor:
-                      lines = list(executor.map(lambda iterator: next(iterator, None), file_iterators))
-                  
-                  if not lines or not lines[0]:
-                      break
-                  Name = ''
-                  Matches = []
-                  for _, name, *matches in map(lambda x: x.decode().split('\t'), lines):
-                      if not Name:
-                          Name = name
-                      assert name == Name
-                      if mode == 'labels' and matches[0]:
-                          Matches += matches
-                      elif mode == 'matches':
-                          for match in matches:
-                              label, count = match.split(':')
-                              Matches.append((int(count), label))
-
-                  # Prepare the content for the current part
-                  if mode == 'labels':
-                      content = f"{idx}\t{Name}\t{':'.join(Matches)}\n"
-                  elif mode == 'matches':
-                      content = f"{idx}\t{Name}\t{'\t'.join([f'{label}:{count}' for count, label in reversed(sorted(Matches))])}\n"
-
-                  # Write the content to the buffer
-                  current_buffer.write(content.encode())
-                  current_size += len(content.encode())
-
-                  # If the buffer has reached the size threshold, upload it as a part
-                  if current_size >= part_size_threshold:
-                      upload_part()
-
-              # If there is any remaining data in the buffer after processing all lines, upload it
-              if current_size > 0:
-                  upload_part()
-
-              # Complete the multipart upload after all parts are uploaded
-              s3.complete_multipart_upload(
-                  Bucket=bucket,
-                  Key=merged_key,
-                  UploadId=upload_id,
-                  MultipartUpload={'Parts': parts}
-              )
-
-              return {
-                  "job_id": job_id,
-                  "fails": event["fails"],
-                  "total": len(event["tasks"]),
-                  "merged_key": merged_key
-              }
-      Runtime: python3.13
-      MemorySize: 256
-      Timeout: 900
 
   MetagraphNotifier:
     Type: AWS::Lambda::Function
@@ -648,17 +583,27 @@ Resources:
           s3 = boto3.client("s3", region_name='eu-central-2', endpoint_url='https://s3.eu-central-2.amazonaws.com')
 
           def lambda_handler(event, context):
+              tasks = event["tasks"]
+
+              fails = sum(task["status"] == "FAILED" for task in tasks)
+              total = len(tasks)
+
+              job_id = event["job_id"]
+              mode = event["query_mode"]
+
               presigned_url = s3.generate_presigned_url(
                   ClientMethod='get_object',
-                  Params={'Bucket': '${MetagraphBucket}', 'Key': event["merged_key"]},
+                  Params={'Bucket': '${MetagraphBucket}', 'Key': f'{job_id}-result.txt'},
                   ExpiresIn=7*24*60*60  # 7 days
               )
+
               print(f"Sending notification to topic ${MetagraphNotificationTopic}")
               sns.publish(
                   TopicArn="${MetagraphNotificationTopic}",
                   Message=(
-                      f"Your Metagraph query {event['job_id']} has completed.\n\n"
-                      f"Failed tasks: {event['fails']} out of {event['total']}\n\n"
+                      f"Your Metagraph query {job_id} has completed.\n\n"
+                      f"Query mode: {mode}\n"
+                      f"Failed tasks: {fails} out of {total}\n\n"
                       f"Download your results here (valid for 7 days):\n\n{presigned_url}"
                   ),
                   Subject="Your Metagraph query has completed"
@@ -683,42 +628,100 @@ Resources:
                   "query.$": "$"
                 }
               },
-              "Next": "WaitJobsDone"
+              "Next": "RunQueries"
             },
-            "WaitJobsDone": {
-              "Type": "Wait",
-              "Seconds": 300,
-              "Next": "CheckJobsStatus"
-            },
-            "CheckJobsStatus": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::lambda:invoke",
-              "OutputPath": "$.Payload",
+            "RunQueries": {
+              "Type": "Map",
+              "ItemsPath": "$.tasks",
               "Parameters": {
-                "FunctionName": "${MetagraphJobMonitor.Arn}",
-                "Payload.$": "$"
+                "job_id.$": "$.job_id",
+                "query_mode.$": "$.query_mode",
+                "query.$": "$.query",
+                "num_top_labels.$": "$.num_top_labels",
+                "min_kmers_fraction_label.$": "$.min_kmers_fraction_label",
+                "min_kmers_fraction_graph.$": "$.min_kmers_fraction_graph",
+
+                "jobName.$": "$$.Map.Item.Value.jobName",
+                "dataset.$": "$$.Map.Item.Value.dataset",
+                "graph_file.$": "$$.Map.Item.Value.graph_file",
+                "anno_file.$": "$$.Map.Item.Value.anno_file",
+                "memory_mib.$": "$$.Map.Item.Value.memory_mib"
               },
-              "Next": "AreJobsDone"
-            },
-            "AreJobsDone": {
-              "Type": "Choice",
-              "Choices": [
-                {
-                  "Variable": "$.all_done",
-                  "BooleanEquals": true,
-                  "Next": "GatherResults"
+              "ResultPath": "$.tasks",
+              "MaxConcurrency": 200,
+              "Iterator": {
+                "StartAt": "SubmitQuery",
+                "States": {
+                  "SubmitQuery": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::batch:submitJob.sync",
+                    "Parameters": {
+                      "JobName.$": "$.jobName",
+                      "JobQueue": "${MetagraphBatchJobQueue}",
+                      "JobDefinition": "${MetagraphBatchJobDefinition}",
+                      "ContainerOverrides": {
+                        "Memory.$": "$.memory_mib",
+                        "Environment": [
+                          { "Name": "DATASET", "Value.$": "$.dataset" },
+                          { "Name": "GRAPH_FILE", "Value.$": "$.graph_file" },
+                          { "Name": "ANNO_FILE", "Value.$": "$.anno_file" },
+                          { "Name": "QUERY", "Value.$": "$.query" },
+                          { "Name": "JOB_ID", "Value.$": "$.job_id" },
+                          { "Name": "QUERY_MODE", "Value.$": "$.query_mode" },
+                          { "Name": "NUM_TOP_LABELS", "Value.$": "$.num_top_labels" },
+                          { "Name": "MIN_KMERS_FRACTION_LABEL", "Value.$": "$.min_kmers_fraction_label" },
+                          { "Name": "MIN_KMERS_FRACTION_GRAPH", "Value.$": "$.min_kmers_fraction_graph" },
+                          { "Name": "MANAGED_BY_AWS", "Value": "STARTED_BY_STEP_FUNCTIONS" }
+                        ]
+                      }
+                    },                   
+                    "Catch": [
+                      {
+                        "ErrorEquals": ["States.ALL"],
+                        "Next": "MarkFailed"
+                      }
+                    ],
+                    "Next": "MarkSucceeded"
+                  },
+                  "MarkSucceeded": {
+                    "Type": "Pass",
+                    "ResultPath": "$",
+                    "Parameters": { 
+                      "jobName.$": "$.JobName",
+                      "status": "SUCCEEDED"
+                    },
+                    "End": true
+                  },
+                  "MarkFailed": {
+                    "Type": "Pass",
+                    "ResultPath": "$",
+                    "Parameters": { 
+                      "jobName.$": "$.JobName",
+                      "status": "FAILED"
+                    },
+                    "End": true
+                  }
                 }
-              ],
-              "Default": "WaitJobsDone"
+              },
+              "Next": "GatherResults"
             },
             "GatherResults": {
               "Type": "Task",
-              "Resource": "arn:aws:states:::lambda:invoke",
-              "OutputPath": "$.Payload",
+              "Resource": "arn:aws:states:::batch:submitJob.sync",
               "Parameters": {
-                "FunctionName": "${MetagraphResultAggregator.Arn}",
-                "Payload.$": "$"
+                "JobName.$": "States.Format('Merge-{}', $.job_id)",
+                "JobQueue": "${MetagraphBatchJobQueue}",
+                "JobDefinition": "${MetagraphMergeJobDefinition}",
+                "ContainerOverrides": {
+                  "Environment": [
+                    { "Name": "MANAGED_BY_AWS", "Value": "STARTED_BY_STEP_FUNCTIONS" },
+                    { "Name": "JOB_ID", "Value.$": "$.job_id" },
+                    { "Name": "QUERY_MODE", "Value.$": "$.query_mode" },
+                    { "Name": "PYTHONUNBUFFERED", "Value": "1" }
+                  ]
+                }
               },
+              "ResultPath": null,
               "Next": "NotifyUser"
             },
             "NotifyUser": {
