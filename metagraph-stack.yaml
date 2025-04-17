@@ -439,7 +439,7 @@ Resources:
     Properties:
       Type: container
       RetryStrategy:
-        Attempts: 3
+        Attempts: 1
       ContainerProperties:
         Image: public.ecr.aws/amazonlinux/amazonlinux:2023
         Vcpus: 4
@@ -651,7 +651,7 @@ Resources:
             "RunQueries": {
               "Type": "Map",
               "ItemsPath": "$.tasks",
-              "MaxConcurrency": 200,
+              "MaxConcurrency": 150,
               "ItemBatcher": {
                 "MaxItemsPerBatch": 1
               },
@@ -685,6 +685,14 @@ Resources:
                         ]
                       }
                     },
+                    "Retry": [
+                      {
+                        "ErrorEquals": ["Batch.TooManyRequestsException", "States.TaskFailed"],
+                        "IntervalSeconds": 2,
+                        "BackoffRate": 2.0,
+                        "MaxAttempts": 3
+                      }
+                    ],
                     "Catch": [
                       {
                         "ErrorEquals": ["States.ALL"],
