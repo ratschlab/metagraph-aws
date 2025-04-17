@@ -195,10 +195,7 @@ MetaGraph can be [installed](https://github.com/ratschlab/metagraph#Install) loc
 ```sh
 aws s3 cp metagraph-data-public/all_sra/data/metagenome/0001 . --recursive
 ```
-Currently, chunks numbered `0001` through to `0400` are available for download. The example query file can be downloaded as follows:
-```sh
-aws s3 cp examples/100_studies_short.fq .
-```
+Currently, chunks numbered `0001` through to `0400` are available for download. The example query file is located in this repository under `examples/100_studies_short.fq`.
 
 #### Conda
 ```sh
@@ -214,7 +211,7 @@ metagraph query -i 0001/graph.primary.small.dbg \
                 --num-top-labels 10 \
                 --min-kmers-fraction-label 0 \
                 --min-kmers-fraction-graph 0 \
-                100_studies_short.fq
+                examples/100_studies_short.fq
 ```
 
 #### Docker
@@ -230,7 +227,7 @@ docker run -v ${MNTDIR}:/mnt ghcr.io/ratschlab/metagraph:master query -i 0001/gr
                                                                       --num-top-labels 10 \
                                                                       --min-kmers-fraction-label 0 \
                                                                       --min-kmers-fraction-graph 0 \
-                                                                      100_studies_short.fq
+                                                                      examples/100_studies_short.fq
 ```
 replacing `${MNTDIR}` with the local mount path.
 
