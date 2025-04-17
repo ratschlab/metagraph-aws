@@ -195,7 +195,7 @@ MetaGraph can be [installed](https://github.com/ratschlab/metagraph#Install) loc
 ```sh
 aws s3 sync s3://metagraph-data-public/all_sra/data/metagenome/0400 . --recursive
 ```
-Currently, chunks numbered `0001` through to `0400` are available for download. The example query file is located in this repository under `examples/100_studies_short.fq`.
+Currently, chunks numbered `0001` through to `0400` are available for download. The example query file is located in this repository under [`examples/100_studies_short.fq`](https://github.com/ratschlab/metagraph-open-data/blob/main/examples/100_studies_short.fq).
 
 #### Conda
 ```sh
