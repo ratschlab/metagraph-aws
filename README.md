@@ -195,7 +195,10 @@ MetaGraph can be installed locally for offline use on a Linux or a Mac host usin
 ```sh
 aws s3 cp metagraph-data-public/all_sra/data/metagenome/0001 . --recursive
 ```
-Currently, chunks numbered `0001` through to `0400` are available for download.
+Currently, chunks numbered `0001` through to `0400` are available for download. The example query file can be downloaded as follows:
+```sh
+aws s3 cp examples/100_studies_short.fq .
+```
 
 #### Conda
 ```sh
