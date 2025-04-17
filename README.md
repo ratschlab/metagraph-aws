@@ -191,9 +191,9 @@ Then, it will save the resulting file in the S3. When all chunks are processed, 
 
 ## Instructions for offline usage
 
-MetaGraph can be [installed](https://github.com/ratschlab/metagraph#Install) locally for offline use on a Linux or a Mac host using the commands below. Search indexes can be downloaded from [`s3://metagraph-data-public`](s3://metagraph-data-public). For example, chunk `0001` can be downloaded to a working directory as follows:
+MetaGraph can be [installed](https://github.com/ratschlab/metagraph#Install) locally for offline use on a Linux or a Mac host using the commands below. Search indexes can be downloaded from [`s3://metagraph-data-public`](s3://metagraph-data-public). For example, chunk `0400` can be downloaded to a working directory as follows:
 ```sh
-aws s3 cp s3://metagraph-data-public/all_sra/data/metagenome/0001 . --recursive
+aws s3 sync s3://metagraph-data-public/all_sra/data/metagenome/0400 . --recursive
 ```
 Currently, chunks numbered `0001` through to `0400` are available for download. The example query file is located in this repository under `examples/100_studies_short.fq`.
 
@@ -203,10 +203,10 @@ conda install -c bioconda -c conda-forge metagraph
 conda activate metagraph
 ```
 
-Followed by a query on chunk `0001` using the command
+Followed by a query on chunk `0400` using the command
 ```sh
-metagraph query -i 0001/graph.primary.small.dbg \
-                -a 0001/annotation.clean.row_diff_brwt.annodbg \
+metagraph query -i 0400/graph.primary.small.dbg \
+                -a 0400/annotation.clean.row_diff_brwt.annodbg \
                 --query-mode matches \
                 --num-top-labels 10 \
                 --min-kmers-fraction-label 0 \
@@ -221,8 +221,8 @@ docker pull ghcr.io/ratschlab/metagraph:master
 
 Followed by a query on chunk `0001` using the command
 ```sh
-docker run -v ${MNTDIR}:/mnt ghcr.io/ratschlab/metagraph:master query -i 0001/graph.primary.small.dbg \
-                                                                      -a 0001/annotation.clean.row_diff_brwt.annodbg \
+docker run -v ${MNTDIR}:/mnt ghcr.io/ratschlab/metagraph:master query -i 0400/graph.primary.small.dbg \
+                                                                      -a 0400/annotation.clean.row_diff_brwt.annodbg \
                                                                       --query-mode matches \
                                                                       --num-top-labels 10 \
                                                                       --min-kmers-fraction-label 0 \
