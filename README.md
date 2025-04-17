@@ -213,12 +213,12 @@ metagraph query -i graph.primary.small.dbg \
 ```sh
 docker pull ghcr.io/ratschlab/metagraph:master
 docker run -v ${MNTDIR}:/mnt ghcr.io/ratschlab/metagraph:master query -i graph.primary.small.dbg \
-                                                                    -a annotation.clean.row_diff_brwt.annodbg \
-                                                                    --query-mode matches \
-                                                                    --num-top-labels 10 \
-                                                                    --min-kmers-fraction-label 0 \
-                                                                    --min-kmers-fraction-graph 0 \
-                                                                    100_studies_short.fq
+                                                                      -a annotation.clean.row_diff_brwt.annodbg \
+                                                                      --query-mode matches \
+                                                                      --num-top-labels 10 \
+                                                                      --min-kmers-fraction-label 0 \
+                                                                      --min-kmers-fraction-graph 0 \
+                                                                      100_studies_short.fq
 ```
 replacing `${MNTDIR}` with the local mount path.
 
