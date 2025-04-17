@@ -201,8 +201,12 @@ Currently, chunks numbered `0001` through to `0400` are available for download.
 ```sh
 conda install -c bioconda -c conda-forge metagraph
 conda activate metagraph
-metagraph query -i graph.primary.small.dbg \
-                -a annotation.clean.row_diff_brwt.annodbg \
+```
+
+Followed by a query on chunk `0001` using the command
+```sh
+metagraph query -i 0001/graph.primary.small.dbg \
+                -a 0001/annotation.clean.row_diff_brwt.annodbg \
                 --query-mode matches \
                 --num-top-labels 10 \
                 --min-kmers-fraction-label 0 \
@@ -213,8 +217,12 @@ metagraph query -i graph.primary.small.dbg \
 #### Docker
 ```sh
 docker pull ghcr.io/ratschlab/metagraph:master
-docker run -v ${MNTDIR}:/mnt ghcr.io/ratschlab/metagraph:master query -i graph.primary.small.dbg \
-                                                                      -a annotation.clean.row_diff_brwt.annodbg \
+```
+
+Followed by a query on chunk `0001` using the command
+```sh
+docker run -v ${MNTDIR}:/mnt ghcr.io/ratschlab/metagraph:master query -i 0001/graph.primary.small.dbg \
+                                                                      -a 0001/annotation.clean.row_diff_brwt.annodbg \
                                                                       --query-mode matches \
                                                                       --num-top-labels 10 \
                                                                       --min-kmers-fraction-label 0 \
