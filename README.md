@@ -191,6 +191,18 @@ Then, it will save the resulting file in the S3. When all chunks are processed, 
 
 ### Instructions for offline usage
 
+MetaGraph can be installed locally for offline use on a Linux or Mac system as follows:
+```sh
+conda install -c bioconda -c conda-forge metagraph
+```
+
+Search indexes can be downloaded from (s3://metagraph-data-public)[s3://metagraph-data-public] as follows:
+```sh
+XYZTODO
+```
+
+Search queries can then be executing using the same commands as above.
+
 ## Additional instructions
 
-For further documentation and usage instructions, please refer to our [Quick start](https://metagraph.ethz.ch/static/docs/quick_start.html) guide in the [MetaGraph documentation](https://metagraph.ethz.ch/static/docs/index.html). The source code is maintained on our [GitHub repository](https://github.com/ratschlab/metagraph).
+For further documentation and usage instructions (including setup instructions using Docker and via source code compilation), please refer to our [Quick start](https://metagraph.ethz.ch/static/docs/quick_start.html) guide in the [MetaGraph documentation](https://metagraph.ethz.ch/static/docs/index.html). The source code is maintained on our [GitHub repository](https://github.com/ratschlab/metagraph).
