@@ -219,7 +219,7 @@ metagraph query -i 0400/graph.primary.small.dbg \
 docker pull ghcr.io/ratschlab/metagraph:master
 ```
 
-Followed by a query on chunk `0001` using the command
+Followed by a query on chunk `0400` using the command
 ```sh
 docker run -v ${MNTDIR}:/mnt ghcr.io/ratschlab/metagraph:master query -i 0400/graph.primary.small.dbg \
                                                                       -a 0400/annotation.clean.row_diff_brwt.annodbg \
