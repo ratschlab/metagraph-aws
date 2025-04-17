@@ -196,7 +196,7 @@ MetaGraph can be installed locally for offline use on a Linux or Mac system as f
 conda install -c bioconda -c conda-forge metagraph
 ```
 
-Search indexes can be downloaded from (s3://metagraph-data-public)[s3://metagraph-data-public] as follows:
+Search indexes can be downloaded from [s3://metagraph-data-public](s3://metagraph-data-public) as follows:
 ```sh
 XYZTODO
 ```
