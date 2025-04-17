@@ -62,3 +62,9 @@ Additional parameters to be passed to `metagraph` CLI:
 - `num_top_labels` (`inf` by default),
 - `min_kmers_fraction_label` (`0.7` by default),
 - `min_kmers_fraction_graph` (`0.0` by default).
+
+### Instructions for offline usage
+
+## Additional instructions
+
+For further documentation and usage instructions, please refer to our [Quick start](https://metagraph.ethz.ch/static/docs/quick_start.html) guide in the [MetaGraph documentation](https://metagraph.ethz.ch/static/docs/index.html). The source code is maintained on our [GitHub repository](https://github.com/ratschlab/metagraph).
