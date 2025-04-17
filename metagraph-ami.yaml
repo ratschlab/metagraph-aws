@@ -1,0 +1,125 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Builds a Metagraph + mount-s3 custom AMI using EC2 Image Builder.'
+
+Resources:
+  ImageBuilderInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/AWSImageBuilderFullAccess
+
+  ImageBuilderInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref ImageBuilderInstanceRole]
+
+  MountpointS3Component:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: !Sub "${AWS::StackName}-MountpointS3Setup"
+      Version: 1.0.0
+      Platform: Linux
+      Data: |
+        name: MountpointS3Setup
+        description: Installs mount-s3
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: InstallMountS3
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - yum install -y wget
+                    - wget https://s3.amazonaws.com/mountpoint-s3-release/latest/x86_64/mount-s3.rpm
+                    - yum install -y ./mount-s3.rpm
+
+  MetagraphComponent:
+    Type: AWS::ImageBuilder::Component
+    Properties:
+      Name: !Sub "${AWS::StackName}-MetagraphSetup"
+      Version: 1.0.0
+      Platform: Linux
+      Data: |
+        name: MetagraphSetup
+        description: Installs Metagraph and its dependencies
+        schemaVersion: 1.0
+        phases:
+          - name: build
+            steps:
+              - name: InstallDependencies
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - yum install -y git gcc14-c++ cmake boost-devel boost-static zlib-devel bzip2-devel automake autoconf libtool libatomic libatomic-static
+                    - export CC=/usr/bin/gcc14-gcc
+                    - export CXX=/usr/bin/gcc14-g++
+                    - git clone https://github.com/ebiggers/libdeflate.git
+                    - mkdir libdeflate/build && cd libdeflate/build
+                    - cmake ..
+                    - make -j$(nproc)
+                    - make install
+              - name: CloneMetagraph
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - git clone --recursive https://github.com/ratschlab/metagraph.git /opt/metagraph
+              - name: BuildSDSL
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - export CC=/usr/bin/gcc14-gcc
+                    - export CXX=/usr/bin/gcc14-g++
+                    - pushd /opt/metagraph/metagraph/external-libraries/sdsl-lite
+                    - sudo env CC=$CC CXX=$CXX ./install.sh $PWD
+                    - popd
+              - name: BuildMetagraph
+                action: ExecuteBash
+                inputs:
+                  commands:
+                    - export CC=/usr/bin/gcc14-gcc
+                    - export CXX=/usr/bin/gcc14-g++
+                    - mkdir -p /opt/metagraph/metagraph/build
+                    - cd /opt/metagraph/metagraph/build
+                    - cmake -DCMAKE_INSTALL_PREFIX=/opt/metagraph/install ..
+                    - make -j$(nproc)
+                    - make install
+
+  MetagraphInfraConfig:
+    Type: AWS::ImageBuilder::InfrastructureConfiguration
+    Properties:
+      Name: MetagraphInfraConfig
+      InstanceTypes: [t3.2xlarge]
+      InstanceProfileName: !Ref ImageBuilderInstanceProfile
+      TerminateInstanceOnFailure: true
+
+  MetagraphImageRecipe:
+    Type: AWS::ImageBuilder::ImageRecipe
+    Properties:
+      Name: MetagraphImageRecipe
+      Version: 1.0.0
+      ParentImage: !Sub "arn:aws:imagebuilder:${AWS::Region}:aws:image/amazon-linux-2023-ecs-optimized-x86/x.x.x"
+      Components:
+        - ComponentArn: !Ref MountpointS3Component
+        - ComponentArn: !Ref MetagraphComponent
+
+  MetagraphImagePipeline:
+    Type: AWS::ImageBuilder::Image
+    Properties:
+      ImageRecipeArn: !Ref MetagraphImageRecipe
+      InfrastructureConfigurationArn: !Ref MetagraphInfraConfig
+      ImageTestsConfiguration:
+        ImageTestsEnabled: false
+
+Outputs:
+  AmiId:
+    Value: !GetAtt MetagraphImagePipeline.ImageId
+    Description: The ID of the built AMI
