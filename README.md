@@ -191,17 +191,36 @@ Then, it will save the resulting file in the S3. When all chunks are processed, 
 
 ### Instructions for offline usage
 
-MetaGraph can be installed locally for offline use on a Linux or Mac system as follows:
-```sh
-conda install -c bioconda -c conda-forge metagraph
-```
-
-Search indexes can be downloaded from [s3://metagraph-data-public](s3://metagraph-data-public) as follows:
+MetaGraph can be installed locally for offline use on a Linux or a Mac host using the commands below. Search indexes can be downloaded from [`s3://metagraph-data-public`](s3://metagraph-data-public) as follows:
 ```sh
 XYZTODO
 ```
 
-Search queries can then be executing using the same commands as above.
+#### Conda
+```sh
+conda install -c bioconda -c conda-forge metagraph
+conda activate metagraph
+metagraph query -i graph.primary.small.dbg \
+                -a annotation.clean.row_diff_brwt.annodbg \
+                --query-mode matches \
+                --num-top-labels 10 \
+                --min-kmers-fraction-label 0 \
+                --min-kmers-fraction-graph 0 \
+                100_studies_short.fq
+```
+
+#### Docker
+```sh
+docker pull ghcr.io/ratschlab/metagraph:master
+docker run -v ${MNTDIR}:/mnt ghcr.io/ratschlab/metagraph:master query -i graph.primary.small.dbg \
+                                                                    -a annotation.clean.row_diff_brwt.annodbg \
+                                                                    --query-mode matches \
+                                                                    --num-top-labels 10 \
+                                                                    --min-kmers-fraction-label 0 \
+                                                                    --min-kmers-fraction-graph 0 \
+                                                                    100_studies_short.fq
+```
+replacing `${MNTDIR}` with the local mount path.
 
 ## Additional instructions
 
