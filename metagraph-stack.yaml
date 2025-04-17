@@ -90,6 +90,14 @@ Resources:
               Service: states.amazonaws.com
             Action: sts:AssumeRole
       Policies:
+        - PolicyName: StepFunctionsNestedExecution
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource: "*"
         - PolicyName: StepFunctionsBatchAccess
           PolicyDocument:
             Version: "2012-10-17"
@@ -535,6 +543,13 @@ Resources:
 
               print(f"Found {len(all_directories)} directories, {len(matching_dirs)} matched '{regex_pattern}'")
 
+              query_mode = event["query"].get("query_mode", "labels")
+              query_filename = event["query"]["query_filename"]
+              query_path = f"queries/{query_filename}"
+              num_top_labels = str(event["query"].get("num_top_labels", "inf"))
+              min_kmers_fraction_label = str(event["query"].get("min_kmers_fraction_label", 0.7))
+              min_kmers_fraction_graph = str(event["query"].get("min_kmers_fraction_graph", 0.0))
+
               tasks = []
               for relative_path, files in matching_dirs:
                   if "graph" not in files or "anno" not in files:
@@ -554,15 +569,18 @@ Resources:
                       "graph_file": graph_file,
                       "anno_file": anno_file,
                       "memory_mib": memory_mib,
+                      "job_id": job_id,
+                      "query_mode": query_mode,
+                      "query": query_path,
+                      "num_top_labels": num_top_labels,
+                      "min_kmers_fraction_label": min_kmers_fraction_label,
+                      "min_kmers_fraction_graph": min_kmers_fraction_graph,
                   })
 
               return {
                   "job_id": job_id,
                   "query_mode": query_mode,
-                  "query": f"queries/{event['query']['query_filename']}",
-                  "num_top_labels": str(event["query"].get("num_top_labels", "inf")),
-                  "min_kmers_fraction_label": str(event["query"].get("min_kmers_fraction_label", 0.7)),
-                  "min_kmers_fraction_graph": str(event["query"].get("min_kmers_fraction_graph", 0.0)),
+                  "num_top_labels": num_top_labels,
                   "tasks": tasks
               }
 
@@ -633,48 +651,40 @@ Resources:
             "RunQueries": {
               "Type": "Map",
               "ItemsPath": "$.tasks",
-              "Parameters": {
-                "job_id.$": "$.job_id",
-                "query_mode.$": "$.query_mode",
-                "query.$": "$.query",
-                "num_top_labels.$": "$.num_top_labels",
-                "min_kmers_fraction_label.$": "$.min_kmers_fraction_label",
-                "min_kmers_fraction_graph.$": "$.min_kmers_fraction_graph",
-
-                "jobName.$": "$$.Map.Item.Value.jobName",
-                "dataset.$": "$$.Map.Item.Value.dataset",
-                "graph_file.$": "$$.Map.Item.Value.graph_file",
-                "anno_file.$": "$$.Map.Item.Value.anno_file",
-                "memory_mib.$": "$$.Map.Item.Value.memory_mib"
-              },
-              "ResultPath": "$.tasks",
               "MaxConcurrency": 200,
-              "Iterator": {
+              "ItemBatcher": {
+                "MaxItemsPerBatch": 1
+              },
+              "ItemProcessor": {
+                "ProcessorConfig": {
+                  "Mode": "DISTRIBUTED",
+                  "ExecutionType": "STANDARD"
+                },
                 "StartAt": "SubmitQuery",
                 "States": {
                   "SubmitQuery": {
                     "Type": "Task",
                     "Resource": "arn:aws:states:::batch:submitJob.sync",
                     "Parameters": {
-                      "JobName.$": "$.jobName",
+                      "JobName.$": "$.Items[0].jobName",
                       "JobQueue": "${MetagraphBatchJobQueue}",
                       "JobDefinition": "${MetagraphBatchJobDefinition}",
                       "ContainerOverrides": {
-                        "Memory.$": "$.memory_mib",
+                        "Memory.$": "$.Items[0].memory_mib",
                         "Environment": [
-                          { "Name": "DATASET", "Value.$": "$.dataset" },
-                          { "Name": "GRAPH_FILE", "Value.$": "$.graph_file" },
-                          { "Name": "ANNO_FILE", "Value.$": "$.anno_file" },
-                          { "Name": "QUERY", "Value.$": "$.query" },
-                          { "Name": "JOB_ID", "Value.$": "$.job_id" },
-                          { "Name": "QUERY_MODE", "Value.$": "$.query_mode" },
-                          { "Name": "NUM_TOP_LABELS", "Value.$": "$.num_top_labels" },
-                          { "Name": "MIN_KMERS_FRACTION_LABEL", "Value.$": "$.min_kmers_fraction_label" },
-                          { "Name": "MIN_KMERS_FRACTION_GRAPH", "Value.$": "$.min_kmers_fraction_graph" },
+                          { "Name": "DATASET", "Value.$": "$.Items[0].dataset" },
+                          { "Name": "GRAPH_FILE", "Value.$": "$.Items[0].graph_file" },
+                          { "Name": "ANNO_FILE", "Value.$": "$.Items[0].anno_file" },
+                          { "Name": "QUERY", "Value.$": "$.Items[0].query" },
+                          { "Name": "JOB_ID", "Value.$": "$.Items[0].job_id" },
+                          { "Name": "QUERY_MODE", "Value.$": "$.Items[0].query_mode" },
+                          { "Name": "NUM_TOP_LABELS", "Value.$": "$.Items[0].num_top_labels" },
+                          { "Name": "MIN_KMERS_FRACTION_LABEL", "Value.$": "$.Items[0].min_kmers_fraction_label" },
+                          { "Name": "MIN_KMERS_FRACTION_GRAPH", "Value.$": "$.Items[0].min_kmers_fraction_graph" },
                           { "Name": "MANAGED_BY_AWS", "Value": "STARTED_BY_STEP_FUNCTIONS" }
                         ]
                       }
-                    },                   
+                    },
                     "Catch": [
                       {
                         "ErrorEquals": ["States.ALL"],
@@ -686,7 +696,7 @@ Resources:
                   "MarkSucceeded": {
                     "Type": "Pass",
                     "ResultPath": "$",
-                    "Parameters": { 
+                    "Parameters": {
                       "jobName.$": "$.JobName",
                       "status": "SUCCEEDED"
                     },
@@ -695,7 +705,7 @@ Resources:
                   "MarkFailed": {
                     "Type": "Pass",
                     "ResultPath": "$",
-                    "Parameters": { 
+                    "Parameters": {
                       "jobName.$": "$.JobName",
                       "status": "FAILED"
                     },
@@ -703,6 +713,7 @@ Resources:
                   }
                 }
               },
+              "ResultPath": "$.tasks",
               "Next": "GatherResults"
             },
             "GatherResults": {
