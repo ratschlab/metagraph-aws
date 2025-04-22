@@ -82,7 +82,7 @@ export AWS_SECRET_ACCESS_KEY="..."
 export AWS_SESSION_TOKEN="..."
 ```
 
-or through creation of the plan text file `~/.aws/credentials` with  the following content:
+or through creation of the plain text file `~/.aws/credentials` with  the following content:
 
 ```sh
 [default]
@@ -111,7 +111,7 @@ cd metagraph-open-data
 - Step Function and Lambdas to schedule your queries as individual Batch tasks and merge their results;
 - SNS topic to send notifications to when the query is fully processed.
 
-If you want to receive Simple Notification Service (SNS) notifications after a query is processed, you have to provide your email to the script using the `--email test@example.com` argument. **You need to confirm the subscription in via a link sent in an e-mail to your mailbox.**:
+If you want to receive Simple Notification Service (SNS) notifications after a query is processed, you have to provide your email to the script using the `--email test@example.com` argument. **You need to confirm the subscription via a link sent in an e-mail to your mailbox.**:
 
 ```sh
 scripts/deploy-metagraph.sh --email test@example.com
