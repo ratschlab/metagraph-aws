@@ -189,7 +189,7 @@ metagraph query -i graph.primary.small.dbg \
 
 Then, it will save the resulting file in the S3. When all chunks are processed, a dedicated script will merge the results in a single file and send you a notification.
 
-## Instructions for offline usage
+## Instructions for local usage
 
 MetaGraph can be [installed](https://github.com/ratschlab/metagraph#Install) locally for offline use on a Linux or a Mac host using the commands below. Search indexes can be downloaded from [`s3://metagraph-data-public`](s3://metagraph-data-public). For example, chunk `0400` can be downloaded to a working directory as follows:
 ```sh
