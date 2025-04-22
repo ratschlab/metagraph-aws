@@ -66,15 +66,15 @@ Please refer to the [AWS docs](https://docs.aws.amazon.com/cli/latest/userguide/
 
 
 
-For the third step, we recommend using authentication via [IAM Identity Center](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html#sso-configure-profile-token-auto-sso):
+For the third step, we recommend using Single Sign-On (SSO) authentication via [IAM Identity Center](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html#sso-configure-profile-token-auto-sso):
 
 ```sh
 aws configure sso
 ```
 
-You can find SSO Start URL in your AWS access portal. **Make sure to select `default` when prompted for profile name.**
+You can find the SSO Start URL in your AWS access portal. **Please make sure to select `default` when prompted for profile name.**
 
-Alternatively, you can setup credentials via environmental variables:
+Alternatively, you can setup your credentials using the following environment variables:
 
 ```sh
 export AWS_ACCESS_KEY_ID="..."
@@ -82,7 +82,7 @@ export AWS_SECRET_ACCESS_KEY="..."
 export AWS_SESSION_TOKEN="..."
 ```
 
-or via `~/.aws/credentials`:
+or through creation of the plain text file `~/.aws/credentials` with  the following content:
 
 ```sh
 [default]
@@ -91,7 +91,7 @@ aws_secret_access_key=...
 aws_session_token=...
 ```
 
-You can find specific tokens and keys in "Access keys" section of your AWS access portal after signing in.
+You can find specific tokens and keys in the "Access keys" section of your AWS access portal after signing in.
 
 ### Clone the project
 
@@ -102,7 +102,7 @@ cd metagraph-open-data
 
 ### Deploy the Cloud Formation template
 
-**We assume that you work in `eu-central-2` region, and your `aws` authentication is configured in the `default` profile.**
+**We assume that you work in the `eu-central-2` region, and your `aws` authentication is configured in the `default` profile.**
 
  The [deployment script](https://github.com/ratschlab/metagraph-open-data/blob/main/scripts/deploy-metagraph.sh) will setup the following on your AWS using the [CloudFormation template](https://github.com/ratschlab/metagraph-open-data/blob/main/metagraph-stack.yaml):
 
@@ -111,15 +111,15 @@ cd metagraph-open-data
 - Step Function and Lambdas to schedule your queries as individual Batch tasks and merge their results;
 - SNS topic to send notifications to when the query is fully processed.
 
-If you want to receive SNS notifications after a query is processed, provide your email to the script using `--email test@example.com` argument, **and confirm subscription in your mailbox**:
+If you want to receive Simple Notification Service (SNS) notifications after a query is processed, you have to provide your email to the script using the `--email test@example.com` argument. **You need to confirm the subscription via a link sent in an e-mail to your mailbox.**:
 
 ```sh
 scripts/deploy-metagraph.sh --email test@example.com
 ```
 
-If you want to use your own AMI for AWS Batch jobs (e.g. for security reasons or to support newer Metagraph features), use `--ami ami-...` to provide your AMI ID or request that it is built on your AWS with `--ami build`. **The latter uses EC2 and may take up to 30 minutes!**
+If you want to use your own Amazon Machine Image (AMI) for AWS Batch jobs (e.g., for security reasons or to support newer MetaGraph features), use `--ami ami-...` to provide your AMI ID or request that it is built using your AWS resources via `--ami build`. **The latter uses EC2 and may take up to 30 minutes!**
 
-### Upload your query to the s3 bucket
+### Upload your query to the S3 bucket
 
 ```sh
 scripts/upload-query.sh examples/test_query.fasta
@@ -139,13 +139,13 @@ You need to describe your query in a JSON file. A minimal job definition ([`exam
 }
 ```
 
-As of now, only datasets stored in `s3://metagraph-data-public` are supported. Generally, the arguments that you can provide are as follows:
+As of now, only dataset indexes stored in `s3://metagraph-data-public` are supported. Generally, the arguments that you can provide are as follows:
 
 - `index_prefix`, e.g. `all_sra` or `all_sra/data/metagenome`. Only chunks in the subdirectories of `index_prefix` will be considered for querying.
 - `query_filename`, the filename of the query that you previously uploaded via `scripts/upload-query.sh`.
 - `index_filter` (`.*` by default), a [re](https://docs.python.org/3/library/re.html)-compatible regular expression to filter paths to chunks on which the query is to be executed.
 
-Additionally, you can specify the following parameters to be passed to the [Metagraph CLI](https://github.com/ratschlab/metagraph) for all queried chunks:
+Additionally, you can specify the following parameters to be passed to the [MetaGraph CLI](https://github.com/ratschlab/metagraph) for all queried chunks:
 
 - `query_mode` (`labels` by default),
 - `num_top_labels` (`inf` by default),
@@ -158,7 +158,7 @@ You can submit the query for execution with the following command:
 scripts/start-metagraph-job.sh examples/scheduler-payload.json
 ```
 
-It will create a dedicated AWS Batch job for each queried chunk, adjusting allocated RAM to the chunk size.
+It will create a dedicated AWS Batch job for each queried chunk, adjusting allocated memory (RAM) to the chunk size.
 
 #### Large query example
 
