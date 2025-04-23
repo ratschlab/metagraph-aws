@@ -197,23 +197,6 @@ aws s3 sync s3://metagraph-data-public/all_sra/data/metagenome/0400 . --no-sign-
 ```
 Currently, chunks numbered `0001` through to `0400` are available for download. The example query file is located in this repository under [`examples/100_studies_short.fq`](https://github.com/ratschlab/metagraph-open-data/blob/main/examples/100_studies_short.fq).
 
-#### Conda
-```sh
-conda install -c bioconda -c conda-forge metagraph
-conda activate metagraph
-```
-
-Followed by a query on chunk `0400` using the command
-```sh
-metagraph query -i 0400/graph.primary.small.dbg \
-                -a 0400/annotation.clean.row_diff_brwt.annodbg \
-                --query-mode matches \
-                --num-top-labels 10 \
-                --min-kmers-fraction-label 0 \
-                --min-kmers-fraction-graph 0 \
-                examples/100_studies_short.fq
-```
-
 #### Docker
 ```sh
 docker pull ghcr.io/ratschlab/metagraph:master
