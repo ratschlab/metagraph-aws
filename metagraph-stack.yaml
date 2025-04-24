@@ -37,8 +37,8 @@ Resources:
                   - s3:GetObject
                   - s3:PutObject
                 Resource:
-                  - arn:aws:s3:::metagraph-data-public
-                  - arn:aws:s3:::metagraph-data-public/*
+                  - arn:aws:s3:::metagraph
+                  - arn:aws:s3:::metagraph/*
                   - !Sub arn:aws:s3:::${MetagraphBucket}
                   - !Sub arn:aws:s3:::${MetagraphBucket}/*
 
@@ -74,7 +74,7 @@ Resources:
                   - 's3:GetObject'
                   - 's3:PutObject'
                 Resource:
-                  - 'arn:aws:s3:::metagraph-data-public*'
+                  - 'arn:aws:s3:::metagraph*'
                   - !Sub 'arn:aws:s3:::${MetagraphBucket}*'
               - Effect: Allow
                 Action:
@@ -152,7 +152,7 @@ Resources:
                   - 's3:PutObject'
                   - 's3:ListBucket'
                 Resource:
-                  - 'arn:aws:s3:::metagraph-data-public*'
+                  - 'arn:aws:s3:::metagraph*'
                   - !Sub 'arn:aws:s3:::${MetagraphBucket}'
                   - !Sub 'arn:aws:s3:::${MetagraphBucket}/*'
 
@@ -199,7 +199,7 @@ Resources:
             mkdir -p /mnt/data
             mkdir -p /mnt/bucket
 
-            mount-s3 metagraph-data-public /mnt/data
+            mount-s3 metagraph /mnt/data
             mount-s3 ${MetagraphBucket} /mnt/bucket
 
             --==BOUNDARY==--
@@ -417,7 +417,7 @@ Resources:
 
           def lambda_handler(event, context):
               prefix = event["query"]["index_prefix"].rstrip('/')
-              bucket = 'metagraph-data-public'
+              bucket = 'metagraph'
 
               all_directories = list_indices(bucket, prefix)
               regex_pattern = event["query"].get("index_filter", ".*")

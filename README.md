@@ -14,10 +14,10 @@ Following the principle of phylogenetic compression, we have hierarchically clus
 Individual categories were formed by grouping phylogenetically similar samples together. This grouping started at the species level of the taxonomic tree. If too few samples were available to form a chunk, the taxonomic parent was selected for aggregation for samples. The resulting list of categories is available [here]().
 
 ### Dataset layout
-All data is available under the following root: s3://metagraph-data-public/all_sra
+All data is available under the following root: s3://metagraph/all_sra
 
 ```
-s3://metagraph-data-public/all_sra
+s3://metagraph/all_sra
 +-- data
 |   +-- category_A
 |   |   +-- chunk_1
@@ -31,7 +31,7 @@ s3://metagraph-data-public/all_sra
 ```
 Where `category_A` would be one of the [Available categories](#available-categories) mentioned above. Likewise, `chunk_1` would be replaced with a running number of the chunk, padded with zeros up to a total length of 4. 
 
-As an example, to reach the data for the 10th chunk of the `metagenome` category, the resulting path would be `s3://metagraph-data-public/all_sra/data/metagenome/0010/`.
+As an example, to reach the data for the 10th chunk of the `metagenome` category, the resulting path would be `s3://metagraph/all_sra/data/metagenome/0010/`.
 
 
 ### Chunk structure
@@ -139,7 +139,7 @@ You need to describe your query in a JSON file. A minimal job definition ([`exam
 }
 ```
 
-As of now, only dataset indexes stored in `s3://metagraph-data-public` are supported. Generally, the arguments that you can provide are as follows:
+As of now, only dataset indexes stored in `s3://metagraph` are supported. Generally, the arguments that you can provide are as follows:
 
 - `index_prefix`, e.g. `all_sra` or `all_sra/data/metagenome`. Only chunks in the subdirectories of `index_prefix` will be considered for querying.
 - `query_filename`, the filename of the query that you previously uploaded via `scripts/upload-query.sh`.
