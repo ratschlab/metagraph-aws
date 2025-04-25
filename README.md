@@ -14,7 +14,7 @@ Following the principle of phylogenetic compression, we have hierarchically clus
 Individual categories were formed by grouping phylogenetically similar samples together. This grouping started at the species level of the taxonomic tree. If too few samples were available to form a chunk, the taxonomic parent was selected for aggregation for samples. The resulting list of categories is available [here]().
 
 ### Dataset layout
-All data is available under the following root: s3://metagraph/all_sra
+All data is available under the following root: [s3://metagraph/all_sra](https://metagraph.s3.amazonaws.com/index.html#all_sra/)
 
 ```
 s3://metagraph/all_sra
