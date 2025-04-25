@@ -8,6 +8,9 @@ Parameters:
   NotificationEmail:
     Type: String
     Description: Email address to subscribe to the SNS topic
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: The security group for your VPC
 
 Resources:
 
@@ -212,16 +215,19 @@ Resources:
       State: ENABLED
       ComputeResources:
         Type: EC2
+        AllocationStrategy: BEST_FIT_PROGRESSIVE
         MinvCpus: 0
         MaxvCpus: 512
         InstanceTypes:
-          - r6i.4xlarge # 16 vCPU, 128 GiB RAM
+          - m6in.xlarge # 4 vCPU, 16 GiB memory, 30 Gbps network
+          - r6in.xlarge # 4 vCPU, 32 GiB memory, 30 Gbps network
+          - r6in.2xlarge # 8 vCPU, 64 GiB memory, 40 Gbps network
         Subnets:
-          - subnet-064a41e7e9f7821a8 # eu-central-2a
-          - subnet-0247650ef94e8aa42 # eu-central-2b
-          - subnet-02ebd4969f85757c4 # eu-central-2c
+          - subnet-0a54e9b2712059ce5 # eu-west-1a
+          - subnet-010153849061cb13b # eu-west-1b
+          - subnet-051ff0b8516072df4 # eu-west-1c
         SecurityGroupIds:
-          - sg-08aa6d6a56d63b8cd
+          - !Ref SecurityGroupId
         InstanceRole: !GetAtt ECSInstanceProfile.Arn
         LaunchTemplate:
           LaunchTemplateId: !Ref MetagraphLaunchTemplate
@@ -369,7 +375,7 @@ Resources:
             export PATH="/opt/metagraph/metagraph/build:$PATH"
             export LD_LIBRARY_PATH="/usr/local/lib64:/usr/lib64:$LD_LIBRARY_PATH"
 
-            metagraph query \
+            metagraph query -p 4 \
               -i "/mnt/data/$DATASET/$GRAPH_FILE" \
               -a "/mnt/data/$DATASET/$ANNO_FILE" \
               --query-mode "$QUERY_MODE" \
@@ -449,7 +455,7 @@ Resources:
                   anno_file = files["anno"]
                   graph_size = file_size(bucket, f"{prefix}/{relative_path}/{graph_file}")
                   anno_size = file_size(bucket, f"{prefix}/{relative_path}/{anno_file}")
-                  memory_mib = (graph_size + anno_size) // 2**20 + 8*1024
+                  memory_mib = (graph_size + anno_size) // 2**20 + 2*1024
 
                   task_name = relative_path.replace("/", "_")
                   tasks.append({
@@ -487,7 +493,7 @@ Resources:
           from urllib.parse import urlparse
 
           sns = boto3.client("sns")
-          s3 = boto3.client("s3", region_name='eu-central-2', endpoint_url='https://s3.eu-central-2.amazonaws.com')
+          s3 = boto3.client("s3", region_name='eu-west-1', endpoint_url='https://s3.eu-west-1.amazonaws.com')
 
           def lambda_handler(event, context):
               tasks = event["tasks"]
