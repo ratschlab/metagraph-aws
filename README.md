@@ -197,6 +197,12 @@ MetaGraph can be [installed](https://github.com/ratschlab/metagraph#Install) loc
 
 Currently, chunks numbered `0001` through to `0400` are available for download. The example query file is located in this repository under [`examples/100_studies_short.fq`](https://github.com/ratschlab/metagraph-open-data/blob/main/examples/100_studies_short.fq).
 
+Alternatively, you can use [Mountpoint for Amazon S3](https://docs.aws.amazon.com/AmazonS3/latest/userguide/mountpoint.html) ([installation guide](https://docs.aws.amazon.com/AmazonS3/latest/userguide/mountpoint-installation.html)) to get direct access to the dataset through the local file system interface:
+
+    mkdir mnt
+    mount-s3 metagraph mnt --no-sign-request
+
+After this, e.g. the chunk `0400` will be accessible in the local filesystem at `mnt/all_sra/data/metagenome/0400`. This method should be preferred in environments with a very high internet throughput (i.e. exceeding disk read/write speed), such as clusters, because it allows MetaGraph CLI to download data directly into RAM, bypassing staging on the disk that would otherwise be a bottleneck.
 #### Docker
 ```sh
 docker pull ghcr.io/ratschlab/metagraph:master
