@@ -191,10 +191,10 @@ Then, it will save the resulting file in the S3. When all chunks are processed, 
 
 ## Instructions for local usage
 
-MetaGraph can be [installed](https://github.com/ratschlab/metagraph#Install) locally for offline use on a Linux or a Mac host using the commands below. Search indexes can be downloaded from [`s3://metagraph-data-public`](s3://metagraph-data-public). For example, chunk `0400` can be downloaded to a working directory as follows:
-```sh
-aws s3 sync s3://metagraph-data-public/all_sra/data/metagenome/0400 . --no-sign-request --region eu-central-2
-```
+MetaGraph can be [installed](https://github.com/ratschlab/metagraph#Install) locally for offline use on a Linux or a Mac host using the commands below. Search indexes can be downloaded from [s3://metagraph](https://metagraph.s3.amazonaws.com/index.html). For example, chunk `0400` can be downloaded to a working directory as follows:
+
+    aws s3 sync s3://metagraph/all_sra/data/metagenome/0400 . --no-sign-request --region eu-central-2
+
 Currently, chunks numbered `0001` through to `0400` are available for download. The example query file is located in this repository under [`examples/100_studies_short.fq`](https://github.com/ratschlab/metagraph-open-data/blob/main/examples/100_studies_short.fq).
 
 #### Docker
