@@ -203,7 +203,9 @@ Alternatively, you can use [Mountpoint for Amazon S3](https://docs.aws.amazon.co
     mount-s3 metagraph mnt --no-sign-request
 
 After this, e.g. the chunk `0400` will be accessible in the local filesystem at `mnt/all_sra/data/metagenome/0400`. This method should be preferred in environments with a very high internet throughput (i.e. exceeding disk read/write speed), such as clusters, because it allows MetaGraph CLI to download data directly into RAM, bypassing staging on the disk that would otherwise be a bottleneck.
-#### Docker
+### Docker
+
+You can install the MetaGraph CLI tool with the following command:
 ```sh
 docker pull ghcr.io/ratschlab/metagraph:master
 ```
