@@ -250,8 +250,8 @@ Resources:
         Attempts: 1
       ContainerProperties:
         Image: public.ecr.aws/amazonlinux/amazonlinux:2023
-        Vcpus: 4
-        Memory: 8192
+        Vcpus: 8
+        Memory: 32768
         Volumes:
           - Name: metagraph-bucket
             Host:
@@ -323,7 +323,7 @@ Resources:
 
               print(f"Copying {merged_key} to the s3 bucket...")
               with open(merged_key, 'rb') as src, open(os.path.join(BUCKET_MOUNT, merged_key), 'wb') as dst:
-                dst.write(src.read())
+                  dst.write(src.read())
         Environment:
           - Name: PYTHONUNBUFFERED
             Value: "1"
@@ -375,7 +375,7 @@ Resources:
             export PATH="/opt/metagraph/metagraph/build:$PATH"
             export LD_LIBRARY_PATH="/usr/local/lib64:/usr/lib64:$LD_LIBRARY_PATH"
 
-            metagraph query -p 4 \
+            metagraph query -v -p 4 \
               -i "/mnt/data/$DATASET/$GRAPH_FILE" \
               -a "/mnt/data/$DATASET/$ANNO_FILE" \
               --query-mode "$QUERY_MODE" \
@@ -384,8 +384,14 @@ Resources:
               --min-kmers-fraction-graph "$MIN_KMERS_FRACTION_GRAPH" \
               "/mnt/bucket/$QUERY" > result.txt
 
+
+            echo "Sorting result.txt by index..."
+            sort -t $'\t' -k1,1n result.txt -o result.txt
+
+            echo "Copying result.txt to /mnt/bucket/$JOB_ID/$AWS_BATCH_JOB_ID.txt..."
             mkdir -p "/mnt/bucket/$JOB_ID"
             cp result.txt "/mnt/bucket/$JOB_ID/$AWS_BATCH_JOB_ID.txt"
+            echo "Copy completed successfully."
         JobRoleArn: !GetAtt MetagraphBatchJobRole.Arn
 
   MetagraphTaskScheduler:
@@ -455,7 +461,7 @@ Resources:
                   anno_file = files["anno"]
                   graph_size = file_size(bucket, f"{prefix}/{relative_path}/{graph_file}")
                   anno_size = file_size(bucket, f"{prefix}/{relative_path}/{anno_file}")
-                  memory_mib = (graph_size + anno_size) // 2**20 + 2*1024
+                  memory_mib = (graph_size + anno_size) // 2**20 + 4*1024
 
                   task_name = relative_path.replace("/", "_")
                   tasks.append({
