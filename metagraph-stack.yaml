@@ -222,6 +222,7 @@ Resources:
           - m6in.xlarge # 4 vCPU, 16 GiB memory, 30 Gbps network
           - r6in.xlarge # 4 vCPU, 32 GiB memory, 30 Gbps network
           - r6in.2xlarge # 8 vCPU, 64 GiB memory, 40 Gbps network
+          - r6in.4xlarge # 16 vCPU, 128 GiB memory, 50 Gbps network
         Subnets:
           - subnet-0a54e9b2712059ce5 # eu-west-1a
           - subnet-010153849061cb13b # eu-west-1b
@@ -250,8 +251,11 @@ Resources:
         Attempts: 1
       ContainerProperties:
         Image: public.ecr.aws/amazonlinux/amazonlinux:2023
-        Vcpus: 8
-        Memory: 32768
+        ResourceRequirements:
+          - Type: VCPU
+            Value: 8
+          - Type: MEMORY
+            Value: 32768
         Volumes:
           - Name: metagraph-bucket
             Host:
@@ -337,8 +341,11 @@ Resources:
         Attempts: 1
       ContainerProperties:
         Image: public.ecr.aws/amazonlinux/amazonlinux:2023
-        Vcpus: 4
-        Memory: 32768
+        ResourceRequirements:
+          - Type: VCPU
+            Value: 4
+          - Type: MEMORY
+            Value: 32768
         Volumes:
           - Name: metagraph-data
             Host:
@@ -375,7 +382,7 @@ Resources:
             export PATH="/opt/metagraph/metagraph/build:$PATH"
             export LD_LIBRARY_PATH="/usr/local/lib64:/usr/lib64:$LD_LIBRARY_PATH"
 
-            metagraph query -v -p 4 \
+            metagraph query -v -p 4 --batch-size 100000 \
               -i "/mnt/data/$DATASET/$GRAPH_FILE" \
               -a "/mnt/data/$DATASET/$ANNO_FILE" \
               --query-mode "$QUERY_MODE" \
@@ -461,7 +468,11 @@ Resources:
                   anno_file = files["anno"]
                   graph_size = file_size(bucket, f"{prefix}/{relative_path}/{graph_file}")
                   anno_size = file_size(bucket, f"{prefix}/{relative_path}/{anno_file}")
-                  memory_mib = (graph_size + anno_size) // 2**20 + 4*1024
+                  memory_mib = (graph_size + anno_size) // 2**20
+                  if relative_path.split("/")[-2] == "SARS_Cov2":
+                      memory_mib += 30*1024
+                  else:
+                      memory_mib += 4*1024
 
                   task_name = relative_path.replace("/", "_")
                   tasks.append({
@@ -571,7 +582,10 @@ Resources:
                       "JobQueue": "${MetagraphBatchJobQueue}",
                       "JobDefinition": "${MetagraphBatchJobDefinition}",
                       "ContainerOverrides": {
-                        "Memory.$": "$.Items[0].memory_mib",
+                        "ResourceRequirements": [
+                          {"Type": "VCPU", "Value": "4"},
+                          {"Type": "MEMORY", "Value.$": "States.Format('{}', $.Items[0].memory_mib)"}
+                        ],
                         "Environment": [
                           { "Name": "DATASET", "Value.$": "$.Items[0].dataset" },
                           { "Name": "GRAPH_FILE", "Value.$": "$.Items[0].graph_file" },
