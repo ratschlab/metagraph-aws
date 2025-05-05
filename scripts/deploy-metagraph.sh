@@ -4,6 +4,7 @@ trap 'echo "Error on line $LINENO"; exit 1' ERR
 
 # ami-0a6d16cc27aa7e3bc for eu-central-2
 DEFAULT_AMI_ID="ami-0fd94b486c6fd5e16"  # Default AMI ID for eu-west-1 region
+ARM_AMI_ID="ami-09d921118707d4417"
 DEFAULT_EMAIL="test@example.com"
 REGION="eu-west-1"
 
@@ -136,4 +137,5 @@ aws cloudformation deploy \
   --parameter-overrides \
     NotificationEmail="$EMAIL" \
     MetagraphAmiId="$AMI_ID" \
+    MetagraphArmAmiId="$ARM_AMI_ID" \
     SecurityGroupId="$SECURITY_GROUP_ID"
