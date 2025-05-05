@@ -446,7 +446,7 @@ Resources:
             export PATH="/opt/metagraph/metagraph/build:$PATH"
             export LD_LIBRARY_PATH="/usr/local/lib64:/usr/lib64:$LD_LIBRARY_PATH"
 
-            metagraph query -p $VCPU --batch-size 100000 \
+            metagraph query -p $(nproc) --batch-size 100000 \
               -i "/mnt/data/$DATASET/$GRAPH_FILE" \
               -a "/mnt/data/$DATASET/$ANNO_FILE" \
               --query-mode "$QUERY_MODE" \
@@ -510,7 +510,7 @@ Resources:
                   if re.match(regex_pattern, path)
               ]
 
-              job_id = event["arn"].split(":")[-1] if "arn" in event else context.aws_request_id
+              job_id = event["query"]["job_id"] if "job_id" in event["query"] else event["arn"].split(":")[-1] if "arn" in event else context.aws_request_id
 
               print(f"Found {len(all_directories)} directories, {len(matching_dirs)} matched '{regex_pattern}'")
 
@@ -518,7 +518,7 @@ Resources:
               query_filename = event["query"]["query_filename"]
               query_path = f"queries/{query_filename}"
 
-              query_size = file_size(${MetagraphBucket}, query_path)
+              query_size = file_size("${MetagraphBucket}", query_path)
               is_large_query = query_size >= 10 * 2**20
 
               vcpu = 16 if is_large_query else 4
@@ -658,7 +658,6 @@ Resources:
                           {"Type": "MEMORY", "Value.$": "States.Format('{}', $.Items[0].memory_mib)"}
                         ],
                         "Environment": [
-                          { "Name": "VCPU", "Value.$": "$.Items[0].vcpu" },
                           { "Name": "DATASET", "Value.$": "$.Items[0].dataset" },
                           { "Name": "GRAPH_FILE", "Value.$": "$.Items[0].graph_file" },
                           { "Name": "ANNO_FILE", "Value.$": "$.Items[0].anno_file" },
