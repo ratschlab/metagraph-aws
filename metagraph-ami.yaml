@@ -81,7 +81,7 @@ Resources:
                     - export CC=/usr/bin/gcc14-gcc
                     - export CXX=/usr/bin/gcc14-g++
                     - pushd /opt/metagraph/metagraph/external-libraries/sdsl-lite
-                    - sudo env CC=$CC CXX=$CXX ./install.sh $PWD
+                    - ./install.sh $PWD
                     - popd
               - name: BuildMetagraph
                 action: ExecuteBash
@@ -91,11 +91,13 @@ Resources:
                     - export CXX=/usr/bin/gcc14-g++
                     - mkdir -p /opt/metagraph/metagraph/build
                     - cd /opt/metagraph/metagraph/build
-                    - ARCH=$(uname -m)
-                    - if [ "$ARCH" != "x86_64" ]; then
+                    - |
+                      ARCH=$(uname -m)
+                      if [ "$ARCH" != "x86_64" ]; then
                         sed -i 's/-m64//g' /opt/metagraph/metagraph/CMakeListsKMC.txt.in
                         sed -i 's/static const char \(maping\|rev_maping\)\[\]/static const int8_t \1[]/g' /opt/metagraph/metagraph/external-libraries/KMC/kmer_counter/splitter.cpp
                         sed -i 's/^\s*static\s\+char\s\+num_codes\[256\]/static int8_t num_codes[256]/' /opt/metagraph/metagraph/external-libraries/KMC/kmc_api/kmer_api.h
+                        sed -i 's/^char CKmerAPI::num_codes\[\]/int8_t CKmerAPI::num_codes[]/' /opt/metagraph/metagraph/external-libraries/KMC/kmc_api/kmer_api.cpp
                       fi
                     - cmake -DCMAKE_INSTALL_PREFIX=/opt/metagraph/install ..
                     - make -j$(nproc)
