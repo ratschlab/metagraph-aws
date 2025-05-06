@@ -627,12 +627,14 @@ Resources:
                   return None
 
           def lambda_handler(event, context):
-              job_id = event["job_id"]
               start_time = parser.isoparse(event["start_time"])
 
               filters = []
 
-              reservations = ec2.describe_instances(Filters=filters)["Reservations"]
+              reservations = []
+              paginator = ec2.get_paginator("describe_instances")
+              for page in paginator.paginate(Filters=filters):
+                  reservations.extend(page["Reservations"])
 
               total_cost = 0.0
               counted_instances = 0
@@ -860,6 +862,75 @@ Resources:
               "Parameters": {
                 "FunctionName": "${MetagraphNotifier.Arn}",
                 "Payload.$": "$"
+              },
+              "End": true
+            }
+          }
+        }
+
+  MetagraphBatchRunner:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      RoleArn: !GetAtt MetagraphStepFunctionsRole.Arn
+      DefinitionString: !Sub |
+        {
+          "StartAt": "InitializeQueryList",
+          "States": {
+            "InitializeQueryList": {
+              "Type": "Pass",
+              "Result": {
+                "queries": [
+                  "1",
+                  "10",
+                  "20",
+                  "50",
+                  "100",
+                  "500",
+                  "2k5"
+                ]
+              },
+              "ResultPath": "$.query_batch",
+              "Next": "RunQueriesSequentially"
+            },
+            "RunQueriesSequentially": {
+              "Type": "Map",
+              "ItemsPath": "$.query_batch.queries",
+              "MaxConcurrency": 1,
+              "Parameters": {
+                "index_prefix.$": "$.index_prefix",
+                "index_filter.$": "$.index_filter",
+                "query_mode.$": "$.query_mode",
+                "num_top_labels.$": "$.num_top_labels",
+                "min_kmers_fraction_label.$": "$.min_kmers_fraction_label",
+                "query_filename.$": "States.Format('100_studies_{}_short.fq', $$.Map.Item.Value)",
+                "job_id.$": "States.Format('{}-{}', $.job_id, $$.Map.Item.Value)"
+              },
+              "Iterator": {
+                "StartAt": "InvokeMetagraphStateMachine",
+                "States": {
+                  "InvokeMetagraphStateMachine": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::states:startExecution.sync",
+                    "Parameters": {
+                      "StateMachineArn": "${MetagraphStateMachine}",
+                      "Input": {
+                        "index_prefix.$": "$.index_prefix",
+                        "index_filter.$": "$.index_filter",
+                        "query_mode.$": "$.query_mode",
+                        "num_top_labels.$": "$.num_top_labels",
+                        "min_kmers_fraction_label.$": "$.min_kmers_fraction_label",
+                        "query_filename.$": "$.query_filename",
+                        "job_id.$": "$.job_id"
+                      }
+                    },
+                    "Next": "Wait10Minutes"
+                  },
+                  "Wait10Minutes": {
+                    "Type": "Wait",
+                    "Seconds": 600,
+                    "End": true
+                  }
+                }
               },
               "End": true
             }
