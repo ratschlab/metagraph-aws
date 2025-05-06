@@ -463,7 +463,7 @@ Resources:
             export PATH="/opt/metagraph/metagraph/build:$PATH"
             export LD_LIBRARY_PATH="/usr/local/lib64:/usr/lib64:$LD_LIBRARY_PATH"
 
-            metagraph query -p $(nproc) --batch-size 100000 \
+            metagraph query -p $VCPU --batch-size 100000 \
               -i "/mnt/data/$DATASET/$GRAPH_FILE" \
               -a "/mnt/data/$DATASET/$ANNO_FILE" \
               --query-mode "$QUERY_MODE" \
@@ -742,7 +742,7 @@ Resources:
             "RunQueries": {
               "Type": "Map",
               "ItemsPath": "$.tasks",
-              "MaxConcurrency": 150,
+              "MaxConcurrency": 200,
               "ItemBatcher": {
                 "MaxItemsPerBatch": 1
               },
@@ -766,6 +766,7 @@ Resources:
                           {"Type": "MEMORY", "Value.$": "States.Format('{}', $.Items[0].memory_mib)"}
                         ],
                         "Environment": [
+                          { "Name": "VCPU", "Value.$": "States.Format('{}', $.Items[0].vcpu)" },
                           { "Name": "DATASET", "Value.$": "$.Items[0].dataset" },
                           { "Name": "GRAPH_FILE", "Value.$": "$.Items[0].graph_file" },
                           { "Name": "ANNO_FILE", "Value.$": "$.Items[0].anno_file" },
