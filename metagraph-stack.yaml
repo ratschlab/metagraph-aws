@@ -696,7 +696,7 @@ Resources:
 
               cost_text = ""
               if cost_usd is not None:
-                  cost_text = f"\n\nEstimated cost: ${cost_usd:.2f} across {instance_count} instance(s)"
+                  cost_text = f"\n\nEstimated cost: {cost_usd:.2f} USD across {instance_count} instance(s)"
 
               presigned_url = s3.generate_presigned_url(
                   ClientMethod='get_object',
