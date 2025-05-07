@@ -551,7 +551,7 @@ Resources:
               query_size = file_size("${MetagraphBucket}", query_path)
               is_large_query = query_size >= 10 * 2**20
 
-              vcpu = 16 if is_large_query else 4
+              vcpu = 4
               job_queue = "${MetagraphLargeBatchJobQueue}" if is_large_query else "${MetagraphBatchJobQueue}"
 
               print(f"Query file is {query_size / 2**20:.2f} MiB; using {vcpu} vCPUs and job queue {job_queue}")
