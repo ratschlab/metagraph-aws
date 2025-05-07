@@ -65,6 +65,16 @@ Resources:
               Service: lambda.amazonaws.com
             Action: sts:AssumeRole
       Policies:
+        - PolicyName: AllowCloudWatchLogging
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
         - PolicyName: AllowPricingGetProducts
           PolicyDocument:
             Version: '2012-10-17'
@@ -463,7 +473,7 @@ Resources:
             export PATH="/opt/metagraph/metagraph/build:$PATH"
             export LD_LIBRARY_PATH="/usr/local/lib64:/usr/lib64:$LD_LIBRARY_PATH"
 
-            metagraph query -p $VCPU --batch-size 100000 \
+            metagraph query -p $(nproc) --batch-size 100000 \
               -i "/mnt/data/$DATASET/$GRAPH_FILE" \
               -a "/mnt/data/$DATASET/$ANNO_FILE" \
               --query-mode "$QUERY_MODE" \
@@ -922,6 +932,7 @@ Resources:
               "Parameters": {
                 "index_prefix.$": "$.index_prefix",
                 "index_filter.$": "$.index_filter",
+                "graph_mode.$": "$.graph_mode",
                 "query_mode.$": "$.query_mode",
                 "num_top_labels.$": "$.num_top_labels",
                 "min_kmers_fraction_label.$": "$.min_kmers_fraction_label",
@@ -939,6 +950,7 @@ Resources:
                       "Input": {
                         "index_prefix.$": "$.index_prefix",
                         "index_filter.$": "$.index_filter",
+                        "graph_mode.$": "$.graph_mode",
                         "query_mode.$": "$.query_mode",
                         "num_top_labels.$": "$.num_top_labels",
                         "min_kmers_fraction_label.$": "$.min_kmers_fraction_label",
