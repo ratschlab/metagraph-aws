@@ -473,7 +473,7 @@ Resources:
             export PATH="/opt/metagraph/metagraph/build:$PATH"
             export LD_LIBRARY_PATH="/usr/local/lib64:/usr/lib64:$LD_LIBRARY_PATH"
 
-            metagraph query -p $(nproc) --batch-size 100000 \
+            metagraph query -p $(nproc) --batch-size 200000 \
               -i "/mnt/data/$DATASET/$GRAPH_FILE" \
               -a "/mnt/data/$DATASET/$ANNO_FILE" \
               --query-mode "$QUERY_MODE" \
@@ -551,7 +551,7 @@ Resources:
               query_size = file_size("${MetagraphBucket}", query_path)
               is_large_query = query_size >= 10 * 2**20
 
-              vcpu = 4
+              vcpu = 1
               job_queue = "${MetagraphLargeBatchJobQueue}" if is_large_query else "${MetagraphBatchJobQueue}"
 
               print(f"Query file is {query_size / 2**20:.2f} MiB; using {vcpu} vCPUs and job queue {job_queue}")
