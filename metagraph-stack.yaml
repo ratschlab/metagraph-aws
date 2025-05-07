@@ -291,7 +291,7 @@ Resources:
         Type: EC2
         AllocationStrategy: BEST_FIT_PROGRESSIVE
         MinvCpus: 0
-        MaxvCpus: 512
+        MaxvCpus: 64
         InstanceTypes:
           - r6in.2xlarge # 8 vCPU, 64 GiB memory, 40 Gbps network
           - r6in.4xlarge # 16 vCPU, 128 GiB memory, 50 Gbps network
@@ -497,15 +497,17 @@ Resources:
 
           s3 = boto3.client('s3')
 
-          def list_indices(bucket, prefix):
+          def list_indices(bucket, prefix, graph_mode):
               prefix = prefix.strip('/').rstrip('/')
               prefix += '/' if prefix else ''
               directories = defaultdict(dict)
               paginator = s3.get_paginator("list_objects_v2")
+
+              graph_suffix = ".small.dbg" if graph_mode == "small" else ".primary.dbg"
               for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
                   for element in page.get("Contents", []):
                       key = element['Key']
-                      is_graph = key.endswith('.dbg')
+                      is_graph = key.endswith(graph_suffix)
                       is_anno = key.endswith('.annodbg')
                       if is_graph or is_anno:
                           splt = key.split('/')
@@ -519,7 +521,8 @@ Resources:
               prefix = event["query"]["index_prefix"].rstrip('/')
               bucket = 'metagraph'
 
-              all_directories = list_indices(bucket, prefix)
+              graph_mode = event["query"].get("graph_mode", "default")
+              all_directories = list_indices(bucket, prefix, graph_mode)
               regex_pattern = event["query"].get("index_filter", ".*")
               matching_dirs = [
                   (path, files)
@@ -582,7 +585,8 @@ Resources:
                   "start_time": event["start_time"],
                   "query_mode": query_mode,
                   "num_top_labels": num_top_labels,
-                  "tasks": tasks
+                  "tasks": tasks,
+                  "merge": event["query"].get("merge", False)
               }
 
   MetagraphCostEstimator:
@@ -630,7 +634,6 @@ Resources:
               start_time = parser.isoparse(event["start_time"])
 
               filters = []
-
               reservations = []
               paginator = ec2.get_paginator("describe_instances")
               for page in paginator.paginate(Filters=filters):
@@ -638,21 +641,22 @@ Resources:
 
               total_cost = 0.0
               counted_instances = 0
+              instance_details = []
 
               for res in reservations:
                   for inst in res["Instances"]:
                       instance_type = inst["InstanceType"]
+                      instance_id = inst["InstanceId"]
                       launch_time = inst["LaunchTime"]
+
                       if launch_time < start_time:
                           continue
 
-                      # Either use actual stop time, or fall back to now
                       stop_time = datetime.now(timezone.utc)
                       if inst["State"]["Name"] == "terminated":
                           stop_time = inst.get("StateTransitionTime", stop_time)
 
                       runtime_hours = (stop_time - launch_time).total_seconds() / 3600
-
                       price = get_price_per_hour(instance_type)
                       if price is None:
                           print(f"Skipping {instance_type}, no price found.")
@@ -662,9 +666,18 @@ Resources:
                       total_cost += instance_cost
                       counted_instances += 1
 
+                      instance_details.append({
+                          "instance_id": instance_id,
+                          "instance_type": instance_type,
+                          "price_per_hour": round(price, 4),
+                          "runtime_hours": round(runtime_hours, 4),
+                          "total_cost": round(instance_cost, 4)
+                      })
+
               return {
                   "total_cost_usd": round(total_cost, 4),
-                  "instance_count": counted_instances
+                  "instance_count": counted_instances,
+                  "per_instance_breakdown": instance_details
               }
 
   MetagraphNotifier:
@@ -717,7 +730,6 @@ Resources:
                   ),
                   Subject="Your Metagraph query has completed"
               )
-
 
   MetagraphStateMachine:
     Type: AWS::StepFunctions::StateMachine
@@ -822,7 +834,18 @@ Resources:
                 }
               },
               "ResultPath": "$.tasks",
-              "Next": "GatherResults"
+              "Next": "ShouldMerge"
+            },
+            "ShouldMerge": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.merge",
+                  "BooleanEquals": true,
+                  "Next": "GatherResults"
+                }
+              ],
+              "Default": "EstimateCost"
             },
             "GatherResults": {
               "Type": "Task",
@@ -923,11 +946,11 @@ Resources:
                         "job_id.$": "$.job_id"
                       }
                     },
-                    "Next": "Wait10Minutes"
+                    "Next": "Wait5Minutes"
                   },
-                  "Wait10Minutes": {
+                  "Wait5Minutes": {
                     "Type": "Wait",
-                    "Seconds": 600,
+                    "Seconds": 300,
                     "End": true
                   }
                 }
