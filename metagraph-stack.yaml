@@ -231,7 +231,9 @@ Resources:
             mkdir -p /mnt/data
             mkdir -p /mnt/bucket
 
-            mount-s3 metagraph /mnt/data
+            export UNSTABLE_MOUNTPOINT_MAX_PREFETCH_WINDOW_SIZE=536870912
+
+            mount-s3 --read-only metagraph /mnt/data
             mount-s3 ${MetagraphBucket} /mnt/bucket
 
             --==BOUNDARY==--
@@ -264,7 +266,9 @@ Resources:
             mkdir -p /mnt/data
             mkdir -p /mnt/bucket
 
-            mount-s3 metagraph /mnt/data
+            export UNSTABLE_MOUNTPOINT_MAX_PREFETCH_WINDOW_SIZE=536870912
+
+            mount-s3 --read-only metagraph /mnt/data
             mount-s3 ${MetagraphBucket} /mnt/bucket
 
             --==BOUNDARY==--
@@ -278,7 +282,7 @@ Resources:
         Type: EC2
         AllocationStrategy: BEST_FIT_PROGRESSIVE
         MinvCpus: 0
-        MaxvCpus: 512
+        MaxvCpus: 128
         InstanceTypes:
           - hpc7g.16xlarge  # 64 vCPU, 128 GiB, 25 Gbps network
         Subnets:
@@ -551,10 +555,9 @@ Resources:
               query_size = file_size("${MetagraphBucket}", query_path)
               is_large_query = query_size >= 10 * 2**20
 
-              vcpu = 1
               job_queue = "${MetagraphLargeBatchJobQueue}" if is_large_query else "${MetagraphBatchJobQueue}"
 
-              print(f"Query file is {query_size / 2**20:.2f} MiB; using {vcpu} vCPUs and job queue {job_queue}")
+              print(f"Query file is {query_size / 2**20:.2f} MiB; using job queue {job_queue}")
 
               num_top_labels = str(event["query"].get("num_top_labels", "inf"))
               min_kmers_fraction_label = str(event["query"].get("min_kmers_fraction_label", 0.7))
@@ -571,7 +574,7 @@ Resources:
                   graph_size = file_size(bucket, f"{prefix}/{relative_path}/{graph_file}")
                   anno_size = file_size(bucket, f"{prefix}/{relative_path}/{anno_file}")
                   memory_mib = (graph_size + anno_size) // 2**20
-                  memory_mib += 30*1024 if relative_path.split("/")[-2] == "SARS_Cov2" else 4*1024
+                  memory_mib += 30*1024 if relative_path.split("/")[-2] == "SARS_Cov2" else 5*1024
 
                   task_name = relative_path.replace("/", "_")
                   tasks.append({
@@ -580,7 +583,7 @@ Resources:
                       "dataset": f"{prefix}/{relative_path}",
                       "graph_file": graph_file,
                       "anno_file": anno_file,
-                      "vcpu": vcpu,
+                      "retry_attempt": 0,
                       "memory_mib": memory_mib,
                       "job_id": job_id,
                       "query_mode": query_mode,
@@ -786,11 +789,10 @@ Resources:
                       "JobDefinition": "${MetagraphBatchJobDefinition}",
                       "ContainerOverrides": {
                         "ResourceRequirements": [
-                          {"Type": "VCPU", "Value.$": "States.Format('{}', $.Items[0].vcpu)"},
+                          {"Type": "VCPU", "Value": "1"},
                           {"Type": "MEMORY", "Value.$": "States.Format('{}', $.Items[0].memory_mib)"}
                         ],
                         "Environment": [
-                          { "Name": "VCPU", "Value.$": "States.Format('{}', $.Items[0].vcpu)" },
                           { "Name": "DATASET", "Value.$": "$.Items[0].dataset" },
                           { "Name": "GRAPH_FILE", "Value.$": "$.Items[0].graph_file" },
                           { "Name": "ANNO_FILE", "Value.$": "$.Items[0].anno_file" },
@@ -807,21 +809,51 @@ Resources:
                         "Name.$": "$.Items[0].job_id"
                       }
                     },
-                    "Retry": [
-                      {
-                        "ErrorEquals": ["Batch.TooManyRequestsException", "States.TaskFailed"],
-                        "IntervalSeconds": 2,
-                        "BackoffRate": 2.0,
-                        "MaxAttempts": 3
-                      }
-                    ],
                     "Catch": [
                       {
                         "ErrorEquals": ["States.ALL"],
-                        "Next": "MarkFailed"
+                        "ResultPath": "$.error",
+                        "Next": "IncrementRetry"
                       }
                     ],
                     "Next": "MarkSucceeded"
+                  },
+
+                  "IncrementRetry": {
+                    "Type": "Pass",
+                    "ResultPath": "$.Items",
+                    "Parameters": {
+                      "Items": [
+                        {
+                          "job_queue.$": "$.Items[0].job_queue",
+                          "jobName.$": "$.Items[0].jobName",
+                          "dataset.$": "$.Items[0].dataset",
+                          "graph_file.$": "$.Items[0].graph_file",
+                          "anno_file.$": "$.Items[0].anno_file",
+                          "proc.$": "$.Items[0].proc",
+                          "retry_attempt.$": "States.MathAdd($.Items[0].retry_attempt, 1)",
+                          "memory_mib.$": "States.MathAdd($.Items[0].memory_mib, 1024)",
+                          "job_id.$": "$.Items[0].job_id",
+                          "query_mode.$": "$.Items[0].query_mode",
+                          "query.$": "$.Items[0].query",
+                          "num_top_labels.$": "$.Items[0].num_top_labels",
+                          "min_kmers_fraction_label.$": "$.Items[0].min_kmers_fraction_label",
+                          "min_kmers_fraction_graph.$": "$.Items[0].min_kmers_fraction_graph"
+                        }
+                      ]
+                    },
+                    "Next": "CheckRetryLimit"
+                  },
+                  "CheckRetryLimit": {
+                    "Type": "Choice",
+                    "Choices": [
+                      {
+                        "Variable": "$.Items[0].retry_attempt",
+                        "NumericLessThan": 3,
+                        "Next": "SubmitQuery"
+                      }
+                    ],
+                    "Default": "MarkFailed"
                   },
                   "MarkSucceeded": {
                     "Type": "Pass",
