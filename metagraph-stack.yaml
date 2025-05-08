@@ -958,7 +958,8 @@ Resources:
                   "50",
                   "100",
                   "500",
-                  "2k5"
+                  "2k5",
+                  "5k"
                 ]
               },
               "ResultPath": "$.query_batch",
