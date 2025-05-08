@@ -236,6 +236,10 @@ Resources:
             mount-s3 --read-only metagraph /mnt/data
             mount-s3 ${MetagraphBucket} /mnt/bucket
 
+            for pid in $(pidof mount-s3); do
+                echo -1000 > /proc/$pid/oom_score_adj
+            done
+
             --==BOUNDARY==--
 
 ### Launch template for container service with s3 bucket mounting
@@ -270,6 +274,10 @@ Resources:
 
             mount-s3 --read-only metagraph /mnt/data
             mount-s3 ${MetagraphBucket} /mnt/bucket
+
+            for pid in $(pidof mount-s3); do
+                echo -1000 > /proc/$pid/oom_score_adj
+            done
 
             --==BOUNDARY==--
 
@@ -830,7 +838,6 @@ Resources:
                           "dataset.$": "$.Items[0].dataset",
                           "graph_file.$": "$.Items[0].graph_file",
                           "anno_file.$": "$.Items[0].anno_file",
-                          "proc.$": "$.Items[0].proc",
                           "retry_attempt.$": "States.MathAdd($.Items[0].retry_attempt, 1)",
                           "memory_mib.$": "States.MathAdd($.Items[0].memory_mib, 1024)",
                           "job_id.$": "$.Items[0].job_id",
