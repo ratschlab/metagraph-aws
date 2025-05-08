@@ -829,7 +829,7 @@ Resources:
 
                   "IncrementRetry": {
                     "Type": "Pass",
-                    "ResultPath": "$.Items",
+                    "ResultPath": "$",
                     "Parameters": {
                       "Items": [
                         {
