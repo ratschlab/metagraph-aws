@@ -581,8 +581,7 @@ Resources:
                   anno_file = files["anno"]
                   graph_size = file_size(bucket, f"{prefix}/{relative_path}/{graph_file}")
                   anno_size = file_size(bucket, f"{prefix}/{relative_path}/{anno_file}")
-                  memory_mib = (graph_size + anno_size) // 2**20
-                  memory_mib += 30*1024 if relative_path.split("/")[-2] == "SARS_Cov2" else 5*1024
+                  dataset_mib = (graph_size + anno_size) // 2**20
 
                   task_name = relative_path.replace("/", "_")
                   tasks.append({
@@ -592,7 +591,8 @@ Resources:
                       "graph_file": graph_file,
                       "anno_file": anno_file,
                       "retry_attempt": 0,
-                      "memory_mib": memory_mib,
+                      "dataset_mib": dataset_mib,
+                      "overhead_mib": 15*1024 if relative_path.split("/")[-2] == "SARS_Cov2" else 5*1024,
                       "job_id": job_id,
                       "query_mode": query_mode,
                       "query": query_path,
@@ -798,7 +798,7 @@ Resources:
                       "ContainerOverrides": {
                         "ResourceRequirements": [
                           {"Type": "VCPU", "Value": "1"},
-                          {"Type": "MEMORY", "Value.$": "States.Format('{}', $.Items[0].memory_mib)"}
+                          {"Type": "MEMORY", "Value.$": "States.Format('{}', States.MathAdd($.Items[0].dataset_mib, $.Items[0].overhead_mib))"}
                         ],
                         "Environment": [
                           { "Name": "DATASET", "Value.$": "$.Items[0].dataset" },
@@ -826,7 +826,6 @@ Resources:
                     ],
                     "Next": "MarkSucceeded"
                   },
-
                   "IncrementRetry": {
                     "Type": "Pass",
                     "ResultPath": "$",
@@ -839,7 +838,8 @@ Resources:
                           "graph_file.$": "$.Items[0].graph_file",
                           "anno_file.$": "$.Items[0].anno_file",
                           "retry_attempt.$": "States.MathAdd($.Items[0].retry_attempt, 1)",
-                          "memory_mib.$": "States.MathAdd($.Items[0].memory_mib, 1024)",
+                          "dataset_mib.$": "$.Items[0].dataset_mib",
+                          "overhead_mib.$": "States.MathAdd($.Items[0].overhead_mib, $.Items[0].overhead_mib)",
                           "job_id.$": "$.Items[0].job_id",
                           "query_mode.$": "$.Items[0].query_mode",
                           "query.$": "$.Items[0].query",
