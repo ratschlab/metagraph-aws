@@ -188,3 +188,41 @@ metagraph query -i graph.primary.small.dbg \
 ```
 
 Then, it will save the resulting file in the S3. When all chunks are processed, a dedicated script will merge the results in a single file and send you a notification.
+
+## Instructions for local usage
+
+MetaGraph can be [installed](https://github.com/ratschlab/metagraph#Install) locally for offline use on a Linux or a Mac host using the commands below. Search indexes can be downloaded from [s3://metagraph](https://metagraph.s3.amazonaws.com/index.html). For example, chunk `0400` can be downloaded to a working directory as follows:
+
+    aws s3 sync s3://metagraph/all_sra/data/metagenome/0400 . --no-sign-request --region eu-central-2
+
+Currently, chunks numbered `0001` through to `0400` are available for download. The example query file is located in this repository under [`examples/100_studies_short.fq`](https://github.com/ratschlab/metagraph-open-data/blob/main/examples/100_studies_short.fq).
+
+Alternatively, you can use [Mountpoint for Amazon S3](https://docs.aws.amazon.com/AmazonS3/latest/userguide/mountpoint.html) ([installation guide](https://docs.aws.amazon.com/AmazonS3/latest/userguide/mountpoint-installation.html)) to get direct access to the dataset through the local file system interface:
+
+    mkdir mnt
+    mount-s3 metagraph mnt --no-sign-request
+
+After this, e.g. the chunk `0400` will be accessible in the local filesystem at `mnt/all_sra/data/metagenome/0400`. This method should be preferred in environments with a very high internet throughput (i.e. exceeding disk read/write speed), such as clusters, because it allows MetaGraph CLI to download data directly into RAM, bypassing staging on the disk that would otherwise be a bottleneck.
+### Docker
+
+You can install the MetaGraph CLI tool with the following command:
+```sh
+docker pull ghcr.io/ratschlab/metagraph:master
+```
+
+Followed by a query on chunk `0400` using the command
+```sh
+git clone https://github.com/ratschlab/metagraph-open-data.git
+docker run -v ${MNTDIR}:/mnt ghcr.io/ratschlab/metagraph:master query -i 0400/graph.primary.small.dbg \
+                                                                      -a 0400/annotation.clean.row_diff_brwt.annodbg \
+                                                                      --query-mode matches \
+                                                                      --num-top-labels 10 \
+                                                                      --min-kmers-fraction-label 0 \
+                                                                      --min-kmers-fraction-graph 0 \
+                                                                      metagraph-open-data/examples/100_studies_short.fq
+```
+replacing `${MNTDIR}` with the local mount path.
+
+## Additional instructions
+
+For further documentation and usage instructions (including setup instructions using Docker and via source code compilation), please refer to our [Quick start](https://metagraph.ethz.ch/static/docs/quick_start.html) guide in the [MetaGraph documentation](https://metagraph.ethz.ch/static/docs/index.html). The source code is maintained on our [GitHub repository](https://github.com/ratschlab/metagraph).
