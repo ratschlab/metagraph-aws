@@ -290,7 +290,7 @@ Resources:
         Type: EC2
         AllocationStrategy: BEST_FIT_PROGRESSIVE
         MinvCpus: 0
-        MaxvCpus: 128
+        MaxvCpus: 192
         InstanceTypes:
           - hpc7g.16xlarge  # 64 vCPU, 128 GiB, 25 Gbps network
         Subnets:
@@ -875,7 +875,7 @@ Resources:
                     "Type": "Pass",
                     "ResultPath": "$",
                     "Parameters": {
-                      "jobName.$": "$.JobName",
+                      "jobName.$": "$.Items[0].jobName",
                       "status": "FAILED"
                     },
                     "End": true
