@@ -572,6 +572,9 @@ Resources:
               min_kmers_fraction_graph = str(event["query"].get("min_kmers_fraction_graph", 0.0))
 
               tasks = []
+              overhead_gib = defaultdict(lambda: 5)
+              overhead_gib['plasmodium_falciparum'] = 10
+              overhead_gib['SARS_Cov2'] = 15
               for relative_path, files in matching_dirs:
                   if "graph" not in files or "anno" not in files:
                       print(f"Skipping {relative_path}, missing required files: {list(files.keys())}")
@@ -584,15 +587,16 @@ Resources:
                   dataset_mib = (graph_size + anno_size) // 2**20
 
                   task_name = relative_path.replace("/", "_")
+                  path = f"{prefix}/{relative_path}"
                   tasks.append({
                       "job_queue": job_queue,
                       "jobName": f"Query-{job_id}-{task_name}"[:128],
-                      "dataset": f"{prefix}/{relative_path}",
+                      "dataset": path,
                       "graph_file": graph_file,
                       "anno_file": anno_file,
                       "retry_attempt": 0,
                       "dataset_mib": dataset_mib,
-                      "overhead_mib": 15*1024 if relative_path.split("/")[-2] == "SARS_Cov2" else 5*1024,
+                      "overhead_mib": 1024*overhead_gib[path.split("/")[-2]],
                       "job_id": job_id,
                       "query_mode": query_mode,
                       "query": query_path,
