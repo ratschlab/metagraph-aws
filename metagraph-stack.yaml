@@ -65,6 +65,14 @@ Resources:
               Service: lambda.amazonaws.com
             Action: sts:AssumeRole
       Policies:
+        - PolicyName: AllowCloudTrailLookup
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudtrail:LookupEvents
+                Resource: "*"
         - PolicyName: AllowCloudWatchLogging
           PolicyDocument:
             Version: "2012-10-17"
@@ -485,7 +493,7 @@ Resources:
             export PATH="/opt/metagraph/metagraph/build:$PATH"
             export LD_LIBRARY_PATH="/usr/local/lib64:/usr/lib64:$LD_LIBRARY_PATH"
 
-            metagraph query -p $(nproc) --batch-size 200000 \
+            /usr/bin/time -v metagraph query -p $(nproc) --batch-size 200000 \
               -i "/mnt/data/$DATASET/$GRAPH_FILE" \
               -a "/mnt/data/$DATASET/$ANNO_FILE" \
               --query-mode "$QUERY_MODE" \
@@ -625,11 +633,12 @@ Resources:
         ZipFile: !Sub |
           import boto3
           import json
+          import re
           from datetime import datetime, timezone
           from dateutil import parser
 
-          ec2 = boto3.client('ec2', region_name='eu-west-1')
-          pricing = boto3.client('pricing', region_name='us-east-1')
+          cloudtrail = boto3.client("cloudtrail")
+          pricing = boto3.client("pricing", region_name="us-east-1")
 
           def get_price_per_hour(instance_type):
               try:
@@ -657,47 +666,72 @@ Resources:
 
           def lambda_handler(event, context):
               start_time = parser.isoparse(event["start_time"])
+              cutoff_time = datetime.now(timezone.utc)
+              if "cutoff_time" in event:
+                  cutoff_time = parser.isoparse(event["cutoff_time"])
 
-              filters = []
-              reservations = []
-              paginator = ec2.get_paginator("describe_instances")
-              for page in paginator.paginate(Filters=filters):
-                  reservations.extend(page["Reservations"])
+              instance_lifetimes = {}  # instance_id -> {"launch_time": ..., "terminate_time": ..., "instance_type": ...}
+
+              # Collect RunInstances and TerminateInstances events
+              for event_name in ["RunInstances", "TerminateInstances"]:
+                  paginator = cloudtrail.get_paginator("lookup_events")
+                  for page in paginator.paginate(
+                      LookupAttributes=[{"AttributeKey": "EventName", "AttributeValue": event_name}],
+                      StartTime=start_time,
+                      EndTime=cutoff_time
+                  ):
+                      for evt in page["Events"]:
+                          event_time = evt["EventTime"]
+                          try:
+                              event_data = json.loads(evt["CloudTrailEvent"])
+                              if event_data.get("errorCode") is not None:
+                                  continue
+
+                              for item in event_data["responseElements"]["instancesSet"]["items"]:
+                                  instance_id = item["instanceId"]
+                                  if event_name == "RunInstances":
+                                      instance_type = item.get("instanceType") or event_data.get("requestParameters", {}).get("instanceType")
+                                      instance_lifetimes.setdefault(instance_id, {})["launch_time"] = event_time
+                                      instance_lifetimes[instance_id]["instance_type"] = instance_type
+                                  elif event_name == "TerminateInstances":
+                                      instance_lifetimes.setdefault(instance_id, {})["terminate_time"] = event_time
+                          except Exception as e:
+                              print(f"Failed to parse event: {e}")
+                              print(evt)
+                              continue
 
               total_cost = 0.0
               counted_instances = 0
               instance_details = []
 
-              for res in reservations:
-                  for inst in res["Instances"]:
-                      instance_type = inst["InstanceType"]
-                      instance_id = inst["InstanceId"]
-                      launch_time = inst["LaunchTime"]
+              for instance_id, data in instance_lifetimes.items():
+                  launch_time = data.get("launch_time")
+                  if not launch_time or launch_time < start_time or launch_time > cutoff_time:
+                      continue
 
-                      if launch_time < start_time:
-                          continue
+                  terminate_time = data.get("terminate_time", cutoff_time)
+                  runtime_hours = (terminate_time - launch_time).total_seconds() / 3600
+                  instance_type = data.get("instance_type")
+                  if not instance_type:
+                      print(f"No instance_type for {instance_id}, skipping")
+                      continue
 
-                      stop_time = datetime.now(timezone.utc)
-                      if inst["State"]["Name"] == "terminated":
-                          stop_time = inst.get("StateTransitionTime", stop_time)
+                  price = get_price_per_hour(instance_type)
+                  if price is None:
+                      print(f"No price found for {instance_type}, skipping")
+                      continue
 
-                      runtime_hours = (stop_time - launch_time).total_seconds() / 3600
-                      price = get_price_per_hour(instance_type)
-                      if price is None:
-                          print(f"Skipping {instance_type}, no price found.")
-                          continue
+                  instance_cost = price * runtime_hours
+                  total_cost += instance_cost
+                  counted_instances += 1
 
-                      instance_cost = price * runtime_hours
-                      total_cost += instance_cost
-                      counted_instances += 1
-
-                      instance_details.append({
-                          "instance_id": instance_id,
-                          "instance_type": instance_type,
-                          "price_per_hour": round(price, 4),
-                          "runtime_hours": round(runtime_hours, 4),
-                          "total_cost": round(instance_cost, 4)
-                      })
+                  instance_details.append({
+                      "instance_id": instance_id,
+                      "instance_type": instance_type,
+                      "price_per_hour": round(price, 4),
+                      "runtime_hours": round(runtime_hours, 4),
+                      "total_cost": round(instance_cost, 4)
+                  })
 
               return {
                   "total_cost_usd": round(total_cost, 4),
