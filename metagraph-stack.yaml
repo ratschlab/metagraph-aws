@@ -231,6 +231,11 @@ Resources:
             cloud_final_modules:
               - [scripts-user, always]
 
+            write_files:
+              - path: /etc/ecs/ecs.config.d/reserved.env
+                content: |
+                  ECS_RESERVED_MEMORY=6144
+
             --==BOUNDARY==
             Content-Type: text/x-shellscript; charset="us-ascii"
 
@@ -268,6 +273,11 @@ Resources:
 
             cloud_final_modules:
               - [scripts-user, always]
+
+            write_files:
+              - path: /etc/ecs/ecs.config.d/reserved.env
+                content: |
+                  ECS_RESERVED_MEMORY=6144
 
             --==BOUNDARY==
             Content-Type: text/x-shellscript; charset="us-ascii"
