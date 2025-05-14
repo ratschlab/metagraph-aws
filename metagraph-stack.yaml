@@ -616,7 +616,7 @@ Resources:
                       "retry_attempt": 0,
                       "proc": event["query"].get("proc", "$(nproc)"),
                       "extra_args": event["query"].get("extra_args", ""),
-                      "batch_size": event["query"].get("batch_size", 200000),
+                      "batch_size": str(event["query"].get("batch_size", 200000)),
                       "dataset_mib": dataset_mib,
                       "overhead_mib": 1024*overhead_gib[f'metagraph/{path}'.split("/")[-2]],
                       "job_id": job_id,
