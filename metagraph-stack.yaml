@@ -493,7 +493,8 @@ Resources:
             export PATH="/opt/metagraph/metagraph/build:$PATH"
             export LD_LIBRARY_PATH="/usr/local/lib64:/usr/lib64:$LD_LIBRARY_PATH"
 
-            /usr/bin/time -v metagraph query -p $(nproc) --batch-size 200000 \
+            dnf install -y time
+            /usr/bin/time -v metagraph query $EXTRA_ARGS -p $PROC --batch-size $BATCH_SIZE \
               -i "/mnt/data/$DATASET/$GRAPH_FILE" \
               -a "/mnt/data/$DATASET/$ANNO_FILE" \
               --query-mode "$QUERY_MODE" \
@@ -569,7 +570,7 @@ Resources:
               query_path = f"queries/{query_filename}"
 
               query_size = file_size("${MetagraphBucket}", query_path)
-              is_large_query = query_size >= 10 * 2**20
+              is_large_query = event.get("large_query", query_size >= 10 * 2**20)
 
               job_queue = "${MetagraphLargeBatchJobQueue}" if is_large_query else "${MetagraphBatchJobQueue}"
 
@@ -603,6 +604,9 @@ Resources:
                       "graph_file": graph_file,
                       "anno_file": anno_file,
                       "retry_attempt": 0,
+                      "proc": event.get("proc", "$(nproc)"),
+                      "extra_args": event.get("extra_args", ""),
+                      "batch_size": event.get("batch_size", 200000),
                       "dataset_mib": dataset_mib,
                       "overhead_mib": 1024*overhead_gib[path.split("/")[-2]],
                       "job_id": job_id,
@@ -842,6 +846,9 @@ Resources:
                           { "Name": "DATASET", "Value.$": "$.Items[0].dataset" },
                           { "Name": "GRAPH_FILE", "Value.$": "$.Items[0].graph_file" },
                           { "Name": "ANNO_FILE", "Value.$": "$.Items[0].anno_file" },
+                          { "Name": "BATCH_SIZE", "Value.$": "$.Items[0].batch_size" },
+                          { "Name": "EXTRA_ARGS", "Value.$": "$.Items[0].extra_args" },
+                          { "Name": "PROC", "Value.$": "$.Items[0].proc" },
                           { "Name": "QUERY", "Value.$": "$.Items[0].query" },
                           { "Name": "JOB_ID", "Value.$": "$.Items[0].job_id" },
                           { "Name": "QUERY_MODE", "Value.$": "$.Items[0].query_mode" },
