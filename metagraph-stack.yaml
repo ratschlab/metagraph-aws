@@ -591,12 +591,12 @@ Resources:
 
                   graph_file = files["graph"]
                   anno_file = files["anno"]
-                  graph_size = file_size(bucket, f"{prefix}/{relative_path}/{graph_file}")
-                  anno_size = file_size(bucket, f"{prefix}/{relative_path}/{anno_file}")
+                  path = prefix + (relative_path and f"/{relative_path}")
+                  graph_size = file_size(bucket, f"{path}/{graph_file}")
+                  anno_size = file_size(bucket, f"{path}/{anno_file}")
                   dataset_mib = (graph_size + anno_size) // 2**20
 
                   task_name = relative_path.replace("/", "_")
-                  path = f"{prefix}/{relative_path}"
                   tasks.append({
                       "job_queue": job_queue,
                       "jobName": f"Query-{job_id}-{task_name}"[:128],
@@ -608,7 +608,7 @@ Resources:
                       "extra_args": event["query"].get("extra_args", ""),
                       "batch_size": event["query"].get("batch_size", 200000),
                       "dataset_mib": dataset_mib,
-                      "overhead_mib": 1024*overhead_gib[path.split("/")[-2]],
+                      "overhead_mib": 1024*overhead_gib[f'metagraph/{path}'.split("/")[-2]],
                       "job_id": job_id,
                       "query_mode": query_mode,
                       "query": query_path,
