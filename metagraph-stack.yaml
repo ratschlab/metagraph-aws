@@ -504,6 +504,7 @@ Resources:
             export LD_LIBRARY_PATH="/usr/local/lib64:/usr/lib64:$LD_LIBRARY_PATH"
 
             dnf install -y time
+            PROC=$(eval echo $PROC)
             /usr/bin/time -v metagraph query $EXTRA_ARGS -p $PROC --batch-size $BATCH_SIZE \
               -i "/mnt/data/$DATASET/$GRAPH_FILE" \
               -a "/mnt/data/$DATASET/$ANNO_FILE" \
