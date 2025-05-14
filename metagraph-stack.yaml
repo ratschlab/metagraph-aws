@@ -534,7 +534,7 @@ Resources:
               directories = defaultdict(dict)
               paginator = s3.get_paginator("list_objects_v2")
 
-              graph_suffix = ".small.dbg" if graph_mode == "small" else ".primary.dbg"
+              graph_suffix = "small.dbg" if graph_mode == "small" else "primary.dbg"
               for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
                   for element in page.get("Contents", []):
                       key = element['Key']
@@ -561,7 +561,7 @@ Resources:
                   if re.match(regex_pattern, path)
               ]
 
-              job_id = event["query"]["job_id"] if "job_id" in event["query"] else event["arn"].split(":")[-1] if "arn" in event else context.aws_request_id
+              job_id = event["query"].get("job_id", event["arn"].split(":")[-1] if "arn" in event else context.aws_request_id)
 
               print(f"Found {len(all_directories)} directories, {len(matching_dirs)} matched '{regex_pattern}'")
 
@@ -570,7 +570,7 @@ Resources:
               query_path = f"queries/{query_filename}"
 
               query_size = file_size("${MetagraphBucket}", query_path)
-              is_large_query = event.get("large_query", query_size >= 10 * 2**20)
+              is_large_query = event["query"].get("large_query", query_size >= 10 * 2**20)
 
               job_queue = "${MetagraphLargeBatchJobQueue}" if is_large_query else "${MetagraphBatchJobQueue}"
 
@@ -586,7 +586,7 @@ Resources:
               overhead_gib['SARS_Cov2'] = 15
               for relative_path, files in matching_dirs:
                   if "graph" not in files or "anno" not in files:
-                      print(f"Skipping {relative_path}, missing required files: {list(files.keys())}")
+                      print(f"Skipping {relative_path}, missing required files, found: {list(files.keys())}")
                       continue
 
                   graph_file = files["graph"]
@@ -604,9 +604,9 @@ Resources:
                       "graph_file": graph_file,
                       "anno_file": anno_file,
                       "retry_attempt": 0,
-                      "proc": event.get("proc", "$(nproc)"),
-                      "extra_args": event.get("extra_args", ""),
-                      "batch_size": event.get("batch_size", 200000),
+                      "proc": event["query"].get("proc", "$(nproc)"),
+                      "extra_args": event["query"].get("extra_args", ""),
+                      "batch_size": event["query"].get("batch_size", 200000),
                       "dataset_mib": dataset_mib,
                       "overhead_mib": 1024*overhead_gib[path.split("/")[-2]],
                       "job_id": job_id,
