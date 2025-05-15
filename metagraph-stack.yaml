@@ -563,7 +563,7 @@ Resources:
               bucket = 'metagraph'
 
               graph_suffix = event["query"].get("graph_suffix", "small.dbg")
-              anno_suffix = event["query"].get("anno_suffix", ".annodbg")
+              anno_suffix = event["query"].get("anno_suffix", "brwt.annodbg")
               all_directories = list_indices(bucket, prefix, graph_suffix, anno_suffix)
               regex_pattern = event["query"].get("index_filter", ".*")
               matching_dirs = [
