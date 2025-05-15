@@ -1050,7 +1050,8 @@ Resources:
                       "Input": {
                         "index_prefix.$": "$.index_prefix",
                         "index_filter.$": "$.index_filter",
-                        "graph_mode.$": "$.graph_mode",
+                        "graph_suffix.$": "$.graph_suffix",
+                        "anno_suffix.$": "$.anno_suffix",
                         "query_mode.$": "$.query_mode",
                         "num_top_labels.$": "$.num_top_labels",
                         "min_kmers_fraction_label.$": "$.min_kmers_fraction_label",
