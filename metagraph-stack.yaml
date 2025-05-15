@@ -539,18 +539,17 @@ Resources:
 
           s3 = boto3.client('s3')
 
-          def list_indices(bucket, prefix, graph_mode):
+          def list_indices(bucket, prefix, graph_suffix, anno_suffix):
               prefix = prefix.strip('/').rstrip('/')
               prefix += '/' if prefix else ''
               directories = defaultdict(dict)
               paginator = s3.get_paginator("list_objects_v2")
 
-              graph_suffix = "small.dbg" if graph_mode == "small" else "primary.dbg"
               for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
                   for element in page.get("Contents", []):
                       key = element['Key']
                       is_graph = key.endswith(graph_suffix)
-                      is_anno = key.endswith('.annodbg')
+                      is_anno = key.endswith(anno_suffix)
                       if is_graph or is_anno:
                           splt = key.split('/')
                           directories['/'.join(splt[:-1])[len(prefix):]]['graph' if is_graph else 'anno'] = splt[-1]
@@ -563,8 +562,9 @@ Resources:
               prefix = event["query"]["index_prefix"].rstrip('/')
               bucket = 'metagraph'
 
-              graph_mode = event["query"].get("graph_mode", "default")
-              all_directories = list_indices(bucket, prefix, graph_mode)
+              graph_suffix = event["query"].get("graph_suffix", "small.dbg")
+              anno_suffix = event["query"].get("anno_suffix", ".annodbg")
+              all_directories = list_indices(bucket, prefix, graph_suffix, anno_suffix)
               regex_pattern = event["query"].get("index_filter", ".*")
               matching_dirs = [
                   (path, files)
@@ -1031,7 +1031,8 @@ Resources:
               "Parameters": {
                 "index_prefix.$": "$.index_prefix",
                 "index_filter.$": "$.index_filter",
-                "graph_mode.$": "$.graph_mode",
+                "graph_suffix.$": "$.graph_suffix",
+                "anno_suffix.$": "$.anno_suffix",
                 "query_mode.$": "$.query_mode",
                 "num_top_labels.$": "$.num_top_labels",
                 "min_kmers_fraction_label.$": "$.min_kmers_fraction_label",
