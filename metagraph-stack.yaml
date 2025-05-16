@@ -584,7 +584,7 @@ Resources:
               query_size = file_size("${MetagraphBucket}", query_path)
               is_large_query = event["query"].get("large_query", query_size >= 10 * 2**20)
 
-              print(f"Query file is {query_size / 2**20:.2f} MiB; using job queue {job_queue}")
+              print(f"Query file is {query_size / 2**20:.2f} MiB")
 
               num_top_labels = str(event["query"].get("num_top_labels", "inf"))
               min_kmers_fraction_label = str(event["query"].get("min_kmers_fraction_label", 0.7))
