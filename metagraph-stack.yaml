@@ -234,7 +234,7 @@ Resources:
             write_files:
               - path: /etc/ecs/ecs.config.d/reserved.env
                 content: |
-                  ECS_RESERVED_MEMORY=6144
+                  ECS_RESERVED_MEMORY=8192
 
             --==BOUNDARY==
             Content-Type: text/x-shellscript; charset="us-ascii"
@@ -277,7 +277,7 @@ Resources:
             write_files:
               - path: /etc/ecs/ecs.config.d/reserved.env
                 content: |
-                  ECS_RESERVED_MEMORY=6144
+                  ECS_RESERVED_MEMORY=8192
 
             --==BOUNDARY==
             Content-Type: text/x-shellscript; charset="us-ascii"
@@ -335,6 +335,7 @@ Resources:
         InstanceTypes:
           - r6in.2xlarge # 8 vCPU, 64 GiB memory, 40 Gbps network
           - r6in.4xlarge # 16 vCPU, 128 GiB memory, 50 Gbps network
+          - r6in.8xlarge # 32 vCPU, 256 GiB memory, 50 Gbps network
         Subnets:
           - subnet-0a54e9b2712059ce5 # eu-west-1a
           - subnet-010153849061cb13b # eu-west-1b
@@ -583,8 +584,6 @@ Resources:
               query_size = file_size("${MetagraphBucket}", query_path)
               is_large_query = event["query"].get("large_query", query_size >= 10 * 2**20)
 
-              job_queue = "${MetagraphLargeBatchJobQueue}" if is_large_query else "${MetagraphBatchJobQueue}"
-
               print(f"Query file is {query_size / 2**20:.2f} MiB; using job queue {job_queue}")
 
               num_top_labels = str(event["query"].get("num_top_labels", "inf"))
@@ -606,6 +605,9 @@ Resources:
                   graph_size = file_size(bucket, f"{path}/{graph_file}")
                   anno_size = file_size(bucket, f"{path}/{anno_file}")
                   dataset_mib = (graph_size + anno_size) // 2**20
+
+                  is_large_graph = dataset_mib >= 115*1024
+                  job_queue = "${MetagraphLargeBatchJobQueue}" if is_large_query and not is_large_graph else "${MetagraphBatchJobQueue}"
 
                   task_name = relative_path.replace("/", "_")
                   tasks.append({
