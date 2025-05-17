@@ -3,7 +3,7 @@ set -euo pipefail
 trap 'echo "Error on line $LINENO"; exit 1' ERR
 
 DEFAULT_AMI_ID="ami-0275a9c8a1796999a"  # Default AMI ID for eu-west-1 region
-ARM_AMI_ID="ami-0275a9c8a1796999a"
+ARM_AMI_ID="ami-025f48d10dcdc89d4"
 DEFAULT_EMAIL="test@example.com"
 REGION="eu-west-1"
 
