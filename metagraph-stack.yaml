@@ -232,9 +232,10 @@ Resources:
               - [scripts-user, always]
 
             write_files:
-              - path: /etc/ecs/ecs.config.d/reserved.env
+              - path: /etc/ecs/ecs.config
                 content: |
                   ECS_RESERVED_MEMORY=8192
+                  ECS_ENABLE_INSTANCE_METRICS=true
 
             --==BOUNDARY==
             Content-Type: text/x-shellscript; charset="us-ascii"
@@ -275,9 +276,10 @@ Resources:
               - [scripts-user, always]
 
             write_files:
-              - path: /etc/ecs/ecs.config.d/reserved.env
+              - path: /etc/ecs/ecs.config
                 content: |
                   ECS_RESERVED_MEMORY=8192
+                  ECS_ENABLE_INSTANCE_METRICS=true
 
             --==BOUNDARY==
             Content-Type: text/x-shellscript; charset="us-ascii"
@@ -298,6 +300,121 @@ Resources:
             done
 
             --==BOUNDARY==--
+
+  AgentDisconnectHandlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SqsRead
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                  - sqs:ChangeMessageVisibility
+                Resource: !GetAtt AgentDisconnectedQueue.Arn
+        - PolicyName: KillUnhealthyECSInstance
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ecs:DescribeContainerInstances
+                  - ecs:UpdateContainerInstancesState
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - autoscaling:TerminateInstanceInAutoScalingGroup
+                Resource: "*"
+
+  AgentDisconnectedQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      DelaySeconds: 300      # 5-minute grace period
+      VisibilityTimeout: 120
+
+  AgentDisconnectHandler:
+    Type: AWS::Lambda::Function
+    Properties:
+      Role: !GetAtt AgentDisconnectHandlerRole.Arn
+      Runtime: python3.13
+      Handler: index.handler
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import boto3, json
+          ecs = boto3.client("ecs")
+          asg = boto3.client("autoscaling")
+
+          def handler(event, _):
+              detail = json.loads(event['Records'][0]['body'])['detail']
+              cluster = detail['clusterArn']
+              inst_arn = detail['containerInstanceArn']
+              ec2_id   = detail['ec2InstanceId']
+
+              # double-check after the delay
+              inst = ecs.describe_container_instances(
+                  cluster=cluster,
+                  containerInstances=[inst_arn]
+              )['containerInstances'][0]
+              if inst['agentConnected']:
+                  return                                      # agent recovered
+
+              ecs.update_container_instances_state(
+                  cluster=cluster,
+                  containerInstances=[inst_arn],
+                  status='DRAINING'
+              )
+
+              asg.terminate_instance_in_auto_scaling_group(
+                  InstanceId=ec2_id,
+                  ShouldDecrementDesiredCapacity=False       # replace it
+              )
+
+  AgentDisconnectRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern:
+        source: ["aws.ecs"]
+        detail-type: ["ECS Container Instance State Change"]
+        detail:
+          agentConnected: [false]
+      Targets:
+        - Arn: !GetAtt AgentDisconnectedQueue.Arn
+          Id: QueueTarget
+
+  AgentDisconnectedQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues: [!Ref AgentDisconnectedQueue]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowEventBridgeSend
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt AgentDisconnectedQueue.Arn
+
+  QueueLambdaMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 1
+      EventSourceArn: !GetAtt AgentDisconnectedQueue.Arn
+      FunctionName: !Ref AgentDisconnectHandler
 
   MetagraphLargeBatchComputeEnvironment:
     Type: AWS::Batch::ComputeEnvironment

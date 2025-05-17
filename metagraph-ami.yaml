@@ -25,7 +25,7 @@ Resources:
     Type: AWS::ImageBuilder::Component
     Properties:
       Name: !Sub "${AWS::StackName}-MountpointS3Setup"
-      Version: 1.0.0
+      Version: 1.0.1
       Platform: Linux
       Data: |
         name: MountpointS3Setup
@@ -48,7 +48,7 @@ Resources:
     Type: AWS::ImageBuilder::Component
     Properties:
       Name: !Sub "${AWS::StackName}-MetagraphSetup"
-      Version: 1.0.0
+      Version: 1.0.1
       Platform: Linux
       Data: |
         name: MetagraphSetup
@@ -115,7 +115,7 @@ Resources:
     Type: AWS::ImageBuilder::ImageRecipe
     Properties:
       Name: MetagraphArmImageRecipe
-      Version: 1.0.0
+      Version: 1.0.1
       ParentImage: !Sub "arn:aws:imagebuilder:${AWS::Region}:aws:image/amazon-linux-2023-ecs-optimized-arm64/x.x.x"
       Components:
         - ComponentArn: !Ref MountpointS3Component
@@ -125,7 +125,7 @@ Resources:
     Type: AWS::ImageBuilder::ImageRecipe
     Properties:
       Name: MetagraphImageRecipe
-      Version: 1.0.0
+      Version: 1.0.1
       ParentImage: !Sub "arn:aws:imagebuilder:${AWS::Region}:aws:image/amazon-linux-2023-ecs-optimized-x86/x.x.x"
       Components:
         - ComponentArn: !Ref MountpointS3Component
