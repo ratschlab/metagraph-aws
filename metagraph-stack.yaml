@@ -231,17 +231,30 @@ Resources:
             cloud_final_modules:
               - [scripts-user, always]
 
-            write_files:
-              - path: /etc/ecs/ecs.config
-                content: |
-                  ECS_RESERVED_MEMORY=8192
-                  ECS_ENABLE_INSTANCE_METRICS=true
-
             --==BOUNDARY==
             Content-Type: text/x-shellscript; charset="us-ascii"
 
             #!/bin/bash
-            set -e
+            set -eux
+
+            for svc in sshd amazon-ssm-agent systemd-journald; do
+              mkdir -p "/etc/systemd/system/$svc.service.d"
+              cat >"/etc/systemd/system/$svc.service.d/oom.conf" <<'EOF'
+            [Service]
+            OOMScoreAdjust=-900
+            EOF
+            done
+
+            systemctl daemon-reload
+            systemctl restart sshd amazon-ssm-agent systemd-journald
+
+            cat <<'EOF' >> /etc/ecs/ecs.config
+            ECS_RESERVED_MEMORY=8192
+            ECS_ENABLE_INSTANCE_METRICS=true
+            EOF
+
+            systemctl restart ecs
+
             mkdir -p /mnt/data
             mkdir -p /mnt/bucket
 
@@ -275,17 +288,29 @@ Resources:
             cloud_final_modules:
               - [scripts-user, always]
 
-            write_files:
-              - path: /etc/ecs/ecs.config
-                content: |
-                  ECS_RESERVED_MEMORY=8192
-                  ECS_ENABLE_INSTANCE_METRICS=true
-
             --==BOUNDARY==
             Content-Type: text/x-shellscript; charset="us-ascii"
 
             #!/bin/bash
-            set -e
+            set -eux
+
+            for svc in sshd amazon-ssm-agent systemd-journald; do
+              mkdir -p "/etc/systemd/system/$svc.service.d"
+              cat >"/etc/systemd/system/$svc.service.d/oom.conf" <<'EOF'
+            [Service]
+            OOMScoreAdjust=-900
+            EOF
+            done
+
+            systemctl daemon-reload
+            systemctl restart sshd amazon-ssm-agent systemd-journald
+
+            cat <<'EOF' >> /etc/ecs/ecs.config
+            ECS_RESERVED_MEMORY=8192
+            ECS_ENABLE_INSTANCE_METRICS=true
+            EOF
+
+            systemctl restart ecs
 
             mkdir -p /mnt/data
             mkdir -p /mnt/bucket
@@ -472,6 +497,11 @@ Resources:
       ComputeEnvironmentOrder:
         - Order: 1
           ComputeEnvironment: !Ref MetagraphLargeBatchComputeEnvironment
+      JobStateTimeLimitActions:
+      - Action: CANCEL
+        State: RUNNABLE
+        Reason: MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT
+        MaxTimeSeconds: 600
 
   MetagraphBatchJobQueue:
     Type: AWS::Batch::JobQueue
@@ -481,6 +511,11 @@ Resources:
       ComputeEnvironmentOrder:
         - Order: 1
           ComputeEnvironment: !Ref MetagraphBatchComputeEnvironment
+      JobStateTimeLimitActions:
+      - Action: CANCEL
+        State: RUNNABLE
+        Reason: MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT
+        MaxTimeSeconds: 600
 
   MetagraphMergeJobDefinition:
     Type: AWS::Batch::JobDefinition
