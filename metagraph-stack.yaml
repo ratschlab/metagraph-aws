@@ -228,8 +228,10 @@ Resources:
             --==BOUNDARY==
             Content-Type: text/cloud-config; charset="us-ascii"
 
-            cloud_final_modules:
-              - [scripts-user, always]
+            bootcmd:
+              - |
+                echo 'ECS_RESERVED_MEMORY=8192' >> /etc/ecs/ecs.config
+                echo 'ECS_ENABLE_INSTANCE_METRICS=true' >> /etc/ecs/ecs.config
 
             --==BOUNDARY==
             Content-Type: text/x-shellscript; charset="us-ascii"
@@ -247,13 +249,6 @@ Resources:
 
             systemctl daemon-reload
             systemctl restart sshd amazon-ssm-agent systemd-journald
-
-            cat <<'EOF' >> /etc/ecs/ecs.config
-            ECS_RESERVED_MEMORY=8192
-            ECS_ENABLE_INSTANCE_METRICS=true
-            EOF
-
-            systemctl restart ecs
 
             mkdir -p /mnt/data
             mkdir -p /mnt/bucket
@@ -285,8 +280,10 @@ Resources:
             --==BOUNDARY==
             Content-Type: text/cloud-config; charset="us-ascii"
 
-            cloud_final_modules:
-              - [scripts-user, always]
+            bootcmd:
+              - |
+                echo 'ECS_RESERVED_MEMORY=8192' >> /etc/ecs/ecs.config
+                echo 'ECS_ENABLE_INSTANCE_METRICS=true' >> /etc/ecs/ecs.config
 
             --==BOUNDARY==
             Content-Type: text/x-shellscript; charset="us-ascii"
@@ -304,13 +301,6 @@ Resources:
 
             systemctl daemon-reload
             systemctl restart sshd amazon-ssm-agent systemd-journald
-
-            cat <<'EOF' >> /etc/ecs/ecs.config
-            ECS_RESERVED_MEMORY=8192
-            ECS_ENABLE_INSTANCE_METRICS=true
-            EOF
-
-            systemctl restart ecs
 
             mkdir -p /mnt/data
             mkdir -p /mnt/bucket
