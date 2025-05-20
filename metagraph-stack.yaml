@@ -227,14 +227,6 @@ Resources:
             Content-Type: multipart/mixed; boundary="==BOUNDARY=="
 
             --==BOUNDARY==
-            Content-Type: text/cloud-config; charset="us-ascii"
-
-            bootcmd:
-              - |
-                echo 'ECS_RESERVED_MEMORY=8192' >> /etc/ecs/ecs.config
-                echo 'ECS_ENABLE_INSTANCE_METRICS=true' >> /etc/ecs/ecs.config
-
-            --==BOUNDARY==
             Content-Type: text/x-shellscript; charset="us-ascii"
 
             #!/bin/bash
@@ -277,14 +269,6 @@ Resources:
           Fn::Base64: !Sub |
             MIME-Version: 1.0
             Content-Type: multipart/mixed; boundary="==BOUNDARY=="
-
-            --==BOUNDARY==
-            Content-Type: text/cloud-config; charset="us-ascii"
-
-            bootcmd:
-              - |
-                echo 'ECS_RESERVED_MEMORY=8192' >> /etc/ecs/ecs.config
-                echo 'ECS_ENABLE_INSTANCE_METRICS=true' >> /etc/ecs/ecs.config
 
             --==BOUNDARY==
             Content-Type: text/x-shellscript; charset="us-ascii"
@@ -686,7 +670,8 @@ Resources:
 
             dnf install -y time
             PROC=$(eval echo $PROC)
-            /usr/bin/time -v metagraph query $EXTRA_ARGS -p $PROC --batch-size $BATCH_SIZE \
+            /usr/bin/time -v metagraph query $EXTRA_ARGS \
+              --threads-each $THREADS_EACH -p $PROC --batch-size $BATCH_SIZE \
               -i "/mnt/data/$DATASET/$GRAPH_FILE" \
               -a "/mnt/data/$DATASET/$ANNO_FILE" \
               --query-mode "$QUERY_MODE" \
@@ -820,12 +805,18 @@ Resources:
               t = event.copy()
 
               if not t["is_large_query"]:
-                  t["memory_mib"]  = str(t["dataset_mib"] + 5 * 1000 * 2**t["retry_attempt"])
+                  t["memory_mib"] = str(t["dataset_mib"] + 3 * 1000 * 2**t["retry_attempt"])
                   t["job_queue"] = "${MetagraphBatchJobQueue}"
+                  t["threads_each"] = "1"
               else:
-                  t["memory_mib"]  = str(125 * 1000 * 2**t["retry_attempt"])
-                  t["job_queue"] = "${MetagraphLargeBatchJobQueue}" if t["retry_attempt"] == 0 else "${MetagraphSuperBatchJobQueue}"
+                  t["memory_mib"] = 125000
+                  while t["memory_mib"] <= t["dataset_mib"] + 10000:
+                      t["memory_mib"] *= 2
+                  t["memory_mib"] = str(t["memory_mib"] * 2**t["retry_attempt"])
+                  t["job_queue"] = "${MetagraphLargeBatchJobQueue}" if t["memory_mib"] == "125000" else "${MetagraphSuperBatchJobQueue}"
+                  t["threads_each"] = "32"
 
+              t["retry_attempt"] += 1
               return t
 
   MetagraphCostEstimator:
@@ -1056,6 +1047,7 @@ Resources:
                           { "Name": "BATCH_SIZE",     "Value.$": "$.batch_size" },
                           { "Name": "EXTRA_ARGS",     "Value.$": "$.extra_args" },
                           { "Name": "PROC",           "Value.$": "$.proc" },
+                          { "Name": "THREADS_EACH",   "Value.$": "$.threads_each" },
                           { "Name": "QUERY",          "Value.$": "$.query" },
                           { "Name": "JOB_ID",         "Value.$": "$.job_id" },
                           { "Name": "QUERY_MODE",     "Value.$": "$.query_mode" },
@@ -1071,19 +1063,10 @@ Resources:
                       {
                         "ErrorEquals": ["States.ALL"],
                         "ResultPath": "$.error",
-                        "Next": "IncrementRetry"
+                        "Next": "CheckRetryLimit"
                       }
                     ],
                     "Next": "MarkSucceeded"
-                  },
-                  "IncrementRetry": {
-                    "Type": "Pass",
-                    "Parameters": {
-                      "new.$": "States.JsonMerge($, {\"retry_attempt\": States.MathAdd($.retry_attempt, 1)}, false)"
-                    },
-                    "ResultPath": "$",
-                    "OutputPath": "$.new",
-                    "Next": "CheckRetryLimit"
                   },
                   "CheckRetryLimit": {
                     "Type": "Choice",
