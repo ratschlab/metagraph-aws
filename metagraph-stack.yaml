@@ -157,7 +157,8 @@ Resources:
               - Effect: Allow
                 Action: lambda:InvokeFunction
                 Resource:
-                  - !GetAtt MetagraphTaskScheduler.Arn
+                  - !GetAtt MetagraphTaskCollector.Arn
+                  - !GetAtt MetagraphTaskConfigurator.Arn
                   - !GetAtt MetagraphNotifier.Arn
                   - !GetAtt MetagraphCostEstimator.Arn
         - PolicyName: StepFunctionsEventBridgePermissions
@@ -431,6 +432,29 @@ Resources:
       EventSourceArn: !GetAtt AgentDisconnectedQueue.Arn
       FunctionName: !Ref AgentDisconnectHandler
 
+  MetagraphSuperBatchComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      Type: MANAGED
+      State: ENABLED
+      ComputeResources:
+        Type: EC2
+        AllocationStrategy: BEST_FIT_PROGRESSIVE
+        MinvCpus: 0
+        MaxvCpus: 192
+        InstanceTypes:
+          - hpc7a.96xlarge  # 192 vCPU, 768 GiB
+        Subnets:
+          - subnet-0a54e9b2712059ce5 # eu-west-1a
+          - subnet-010153849061cb13b # eu-west-1b
+          - subnet-051ff0b8516072df4 # eu-west-1c
+        SecurityGroupIds:
+          - !Ref SecurityGroupId
+        InstanceRole: !GetAtt ECSInstanceProfile.Arn
+        LaunchTemplate:
+          LaunchTemplateId: !Ref MetagraphLaunchTemplate
+          Version: !GetAtt MetagraphLaunchTemplate.LatestVersionNumber
+
   MetagraphLargeBatchComputeEnvironment:
     Type: AWS::Batch::ComputeEnvironment
     Properties:
@@ -478,6 +502,20 @@ Resources:
         LaunchTemplate:
           LaunchTemplateId: !Ref MetagraphLaunchTemplate
           Version: !GetAtt MetagraphLaunchTemplate.LatestVersionNumber
+
+  MetagraphSuperBatchJobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      State: ENABLED
+      Priority: 1
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment: !Ref MetagraphSuperBatchComputeEnvironment
+      JobStateTimeLimitActions:
+      - Action: CANCEL
+        State: RUNNABLE
+        Reason: MISCONFIGURATION:JOB_RESOURCE_REQUIREMENT
+        MaxTimeSeconds: 600
 
   MetagraphLargeBatchJobQueue:
     Type: AWS::Batch::JobQueue
@@ -667,119 +705,128 @@ Resources:
             echo "Copy completed successfully."
         JobRoleArn: !GetAtt MetagraphBatchJobRole.Arn
 
-  MetagraphTaskScheduler:
+  MetagraphTaskCollector:
     Type: AWS::Lambda::Function
     Properties:
       Role: !GetAtt MetagraphLambdaRole.Arn
       Runtime: python3.13
       Handler: index.lambda_handler
       Timeout: 300
+      MemorySize: 256
+      Description: |
+        First-phase scheduler - discovers every index/graph pair and returns
+        an array of minimal task objects.
       Code:
         ZipFile: !Sub |
-          import boto3
-          import re
+          import boto3, re, json, os
           from collections import defaultdict
 
-          s3 = boto3.client('s3')
+          s3 = boto3.client("s3")
 
           def list_indices(bucket, prefix, graph_suffix, anno_suffix):
-              prefix = prefix.strip('/').rstrip('/')
-              prefix += '/' if prefix else ''
-              directories = defaultdict(dict)
+              """Return {path: {'graph':file,'anno':file}} for all directories."""
               paginator = s3.get_paginator("list_objects_v2")
+              prefix = prefix.strip("/");  prefix += prefix and "/"
+              dirs = defaultdict(dict)
 
               for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-                  for element in page.get("Contents", []):
-                      key = element['Key']
+                  for obj in page.get("Contents", []):
+                      key = obj["Key"]
                       is_graph = key.endswith(graph_suffix)
-                      is_anno = key.endswith(anno_suffix)
-                      if is_graph or is_anno:
-                          splt = key.split('/')
-                          directories['/'.join(splt[:-1])[len(prefix):]]['graph' if is_graph else 'anno'] = splt[-1]
-              return directories
+                      is_anno  = key.endswith(anno_suffix)
+                      if not (is_graph or is_anno):
+                          continue
+                      parts = key.split("/")
+                      rel   = "/".join(parts[:-1])[len(prefix):]
+                      dirs[rel]["graph" if is_graph else "anno"] = parts[-1]
+              return dirs
 
-          def file_size(bucket, key): # bytes
-              return s3.head_object(Bucket=bucket, Key=key)["ContentLength"]
+          def size_mib(bucket, key):
+              return s3.head_object(Bucket=bucket, Key=key)["ContentLength"] // (2**20)
 
-          def lambda_handler(event, context):
-              prefix = event["query"]["index_prefix"].rstrip('/')
-              bucket = 'metagraph'
+          def lambda_handler(event, _):
+              q   = event["query"]
+              idx = q["index_prefix"].rstrip("/")
+              bucket = "metagraph"
 
-              graph_suffix = event["query"].get("graph_suffix", "small.dbg")
-              anno_suffix = event["query"].get("anno_suffix", "brwt.annodbg")
-              all_directories = list_indices(bucket, prefix, graph_suffix, anno_suffix)
-              regex_pattern = event["query"].get("index_filter", ".*")
-              matching_dirs = [
-                  (path, files)
-                  for path, files in all_directories.items()
-                  if re.match(regex_pattern, path)
-              ]
+              graph_suffix = q.get("graph_suffix", "small.dbg")
+              anno_suffix  = q.get("anno_suffix", "brwt.annodbg")
+              regex        = re.compile(q.get("index_filter", ".*"))
 
-              job_id = event["query"].get("job_id", event["arn"].split(":")[-1] if "arn" in event else context.aws_request_id)
+              all_dirs  = list_indices(bucket, idx, graph_suffix, anno_suffix)
+              matches   = [(path, files) for path, files in all_dirs.items() if regex.match(path)]
 
-              print(f"Found {len(all_directories)} directories, {len(matching_dirs)} matched '{regex_pattern}'")
-
-              query_mode = event["query"].get("query_mode", "labels")
-              query_filename = event["query"]["query_filename"]
-              query_path = f"queries/{query_filename}"
-
-              query_size = file_size("${MetagraphBucket}", query_path)
-              is_large_query = event["query"].get("large_query", query_size >= 10 * 2**20)
-
-              print(f"Query file is {query_size / 2**20:.2f} MiB")
-
-              num_top_labels = str(event["query"].get("num_top_labels", "inf"))
-              min_kmers_fraction_label = str(event["query"].get("min_kmers_fraction_label", 0.7))
-              min_kmers_fraction_graph = str(event["query"].get("min_kmers_fraction_graph", 0.0))
+              job_id = q.get("job_id", event["arn"].split(":")[-1])
+              query_key = f'queries/{q["query_filename"]}'
+              query_size_mib = size_mib("${MetagraphBucket}", query_key)
+              is_large_query = event["query"].get("large_query", query_size_mib >= 10)
 
               tasks = []
-              overhead_gib = defaultdict(lambda: 5)
-              overhead_gib['plasmodium_falciparum'] = 10
-              overhead_gib['SARS_Cov2'] = 15
-              for relative_path, files in matching_dirs:
-                  if "graph" not in files or "anno" not in files:
-                      print(f"Skipping {relative_path}, missing required files, found: {list(files.keys())}")
+              query_mode = q.get("query_mode", "labels")
+              for path, files in matches:
+                  missing = {"graph", "anno"}-files.keys()
+                  if missing:
+                      print(f"Skipping {path}, missing required files: {missing}")
                       continue
 
-                  graph_file = files["graph"]
-                  anno_file = files["anno"]
-                  path = prefix + (relative_path and f"/{relative_path}")
-                  graph_size = file_size(bucket, f"{path}/{graph_file}")
-                  anno_size = file_size(bucket, f"{path}/{anno_file}")
-                  dataset_mib = (graph_size + anno_size) // 2**20
+                  dataset = idx + (path and "/") + path
+                  dataset_mib = (
+                      size_mib(bucket, f"{dataset}/{files['graph']}") +
+                      size_mib(bucket, f"{dataset}/{files['anno']}")
+                  )
 
-                  is_large_graph = dataset_mib >= 115*1024
-                  job_queue = "${MetagraphLargeBatchJobQueue}" if is_large_query and not is_large_graph else "${MetagraphBatchJobQueue}"
-
-                  task_name = relative_path.replace("/", "_")
                   tasks.append({
-                      "job_queue": job_queue,
-                      "jobName": f"Query-{job_id}-{task_name}"[:128],
-                      "dataset": path,
-                      "graph_file": graph_file,
-                      "anno_file": anno_file,
-                      "retry_attempt": 0,
-                      "proc": event["query"].get("proc", "$(nproc)"),
-                      "extra_args": event["query"].get("extra_args", ""),
-                      "batch_size": str(event["query"].get("batch_size", 200000)),
-                      "dataset_mib": dataset_mib,
-                      "overhead_mib": 1024*overhead_gib[f'metagraph/{path}'.split("/")[-2]],
-                      "job_id": job_id,
-                      "query_mode": query_mode,
-                      "query": query_path,
-                      "num_top_labels": num_top_labels,
-                      "min_kmers_fraction_label": min_kmers_fraction_label,
-                      "min_kmers_fraction_graph": min_kmers_fraction_graph,
+                      "dataset":       dataset,
+                      "graph_file":    files["graph"],
+                      "anno_file":     files["anno"],
+                      "query":         query_key,
+                      "query_mode":    query_mode,
+                      "num_top_labels":str(q.get("num_top_labels", "inf")),
+                      "min_kmers_fraction_label": str(q.get("min_kmers_fraction_label", 0.7)),
+                      "min_kmers_fraction_graph": str(q.get("min_kmers_fraction_graph", 0.0)),
+                      "extra_args":    q.get("extra_args", ""),
+                      "batch_size":    str(q.get("batch_size", 8*10**6)),
+                      "proc":          q.get("proc", "$(nproc)"),
+                      "job_id":        f"{job_id}-{path.replace('/', '-')}",
+                      "dataset_mib":   dataset_mib,
+                      "is_large_query":is_large_query,
+                      "retry_attempt": 0
                   })
 
               return {
-                  "job_id": job_id,
-                  "start_time": event["start_time"],
-                  "query_mode": query_mode,
-                  "num_top_labels": num_top_labels,
-                  "tasks": tasks,
-                  "merge": event["query"].get("merge", False)
+                  "job_id":        job_id,
+                  "start_time":    event["start_time"],
+                  "query_mode":    query_mode,
+                  "tasks":         tasks,
+                  "merge":         q.get("merge", False)
               }
+
+  MetagraphTaskConfigurator:
+    Type: AWS::Lambda::Function
+    Properties:
+      Role: !GetAtt MetagraphLambdaRole.Arn
+      Runtime: python3.13
+      Handler: index.lambda_handler
+      Timeout: 60
+      MemorySize: 128
+      Description: |
+        Second-phase scheduler - given a single task from the collector,
+        decide memory + Batch queue every attempt (fresh run or retry).
+      Code:
+        ZipFile: !Sub |
+          import os, json
+
+          def lambda_handler(event, _):
+              t = event.copy()
+
+              if not t["is_large_query"]:
+                  t["memory_mib"]  = str(t["dataset_mib"] + 5 * 1000 * 2**t["retry_attempt"])
+                  t["job_queue"] = "${MetagraphBatchJobQueue}"
+              else:
+                  t["memory_mib"]  = str(125 * 1000 * 2**t["retry_attempt"])
+                  t["job_queue"] = "${MetagraphLargeBatchJobQueue}" if t["retry_attempt"] == 0 else "${MetagraphSuperBatchJobQueue}"
+
+              return t
 
   MetagraphCostEstimator:
     Type: AWS::Lambda::Function
@@ -962,7 +1009,7 @@ Resources:
               "Resource": "arn:aws:states:::lambda:invoke",
               "OutputPath": "$.Payload",
               "Parameters": {
-                "FunctionName": "${MetagraphTaskScheduler.Arn}",
+                "FunctionName": "${MetagraphTaskCollector.Arn}",
                 "Payload": {
                   "arn.$": "$$.Execution.Id",
                   "query.$": "$",
@@ -975,47 +1022,50 @@ Resources:
               "Type": "Map",
               "ItemsPath": "$.tasks",
               "MaxConcurrency": 200,
-              "ItemBatcher": {
-                "MaxItemsPerBatch": 1
-              },
-              "ItemProcessor": {
-                "ProcessorConfig": {
-                  "Mode": "DISTRIBUTED",
-                  "ExecutionType": "STANDARD"
-                },
-                "StartAt": "SubmitQuery",
+
+              "Iterator": {
+                "StartAt": "ConfigureTask",
+
                 "States": {
+                  "ConfigureTask": {
+                    "Type": "Task",
+                    "Resource": "arn:aws:states:::lambda:invoke",
+                    "OutputPath": "$.Payload",
+                    "Parameters": {
+                      "FunctionName": "${MetagraphTaskConfigurator.Arn}",
+                      "Payload.$": "$"
+                    },
+                    "Next": "SubmitQuery"
+                  },
                   "SubmitQuery": {
                     "Type": "Task",
                     "Resource": "arn:aws:states:::batch:submitJob.sync",
                     "Parameters": {
-                      "JobName.$": "$.Items[0].jobName",
-                      "JobQueue.$": "$.Items[0].job_queue",
+                      "JobName.$": "States.Format('Query-{}', $.job_id)",
+                      "JobQueue.$": "$.job_queue",
                       "JobDefinition": "${MetagraphBatchJobDefinition}",
                       "ContainerOverrides": {
                         "ResourceRequirements": [
                           {"Type": "VCPU", "Value": "1"},
-                          {"Type": "MEMORY", "Value.$": "States.Format('{}', States.MathAdd($.Items[0].dataset_mib, $.Items[0].overhead_mib))"}
+                          {"Type": "MEMORY", "Value.$": "$.memory_mib"}
                         ],
                         "Environment": [
-                          { "Name": "DATASET", "Value.$": "$.Items[0].dataset" },
-                          { "Name": "GRAPH_FILE", "Value.$": "$.Items[0].graph_file" },
-                          { "Name": "ANNO_FILE", "Value.$": "$.Items[0].anno_file" },
-                          { "Name": "BATCH_SIZE", "Value.$": "$.Items[0].batch_size" },
-                          { "Name": "EXTRA_ARGS", "Value.$": "$.Items[0].extra_args" },
-                          { "Name": "PROC", "Value.$": "$.Items[0].proc" },
-                          { "Name": "QUERY", "Value.$": "$.Items[0].query" },
-                          { "Name": "JOB_ID", "Value.$": "$.Items[0].job_id" },
-                          { "Name": "QUERY_MODE", "Value.$": "$.Items[0].query_mode" },
-                          { "Name": "NUM_TOP_LABELS", "Value.$": "$.Items[0].num_top_labels" },
-                          { "Name": "MIN_KMERS_FRACTION_LABEL", "Value.$": "$.Items[0].min_kmers_fraction_label" },
-                          { "Name": "MIN_KMERS_FRACTION_GRAPH", "Value.$": "$.Items[0].min_kmers_fraction_graph" },
-                          { "Name": "MANAGED_BY_AWS", "Value": "STARTED_BY_STEP_FUNCTIONS" }
+                          { "Name": "DATASET",        "Value.$": "$.dataset" },
+                          { "Name": "GRAPH_FILE",     "Value.$": "$.graph_file" },
+                          { "Name": "ANNO_FILE",      "Value.$": "$.anno_file" },
+                          { "Name": "BATCH_SIZE",     "Value.$": "$.batch_size" },
+                          { "Name": "EXTRA_ARGS",     "Value.$": "$.extra_args" },
+                          { "Name": "PROC",           "Value.$": "$.proc" },
+                          { "Name": "QUERY",          "Value.$": "$.query" },
+                          { "Name": "JOB_ID",         "Value.$": "$.job_id" },
+                          { "Name": "QUERY_MODE",     "Value.$": "$.query_mode" },
+                          { "Name": "NUM_TOP_LABELS", "Value.$": "$.num_top_labels" },
+                          { "Name": "MIN_KMERS_FRACTION_LABEL",  "Value.$": "$.min_kmers_fraction_label" },
+                          { "Name": "MIN_KMERS_FRACTION_GRAPH",  "Value.$": "$.min_kmers_fraction_graph" },
+                          { "Name": "MANAGED_BY_AWS", "Value":   "STARTED_BY_STEP_FUNCTIONS" }
                         ]
                       },
-                      "Tags": {
-                        "Name.$": "$.Items[0].job_id"
-                      }
+                      "Tags": { "Name.$": "$.job_id" }
                     },
                     "Catch": [
                       {
@@ -1028,61 +1078,22 @@ Resources:
                   },
                   "IncrementRetry": {
                     "Type": "Pass",
-                    "ResultPath": "$",
                     "Parameters": {
-                      "Items": [
-                        {
-                          "job_queue.$": "$.Items[0].job_queue",
-                          "jobName.$": "$.Items[0].jobName",
-                          "dataset.$": "$.Items[0].dataset",
-                          "graph_file.$": "$.Items[0].graph_file",
-                          "batch_size.$": "$.Items[0].batch_size",
-                          "extra_args.$": "$.Items[0].extra_args",
-                          "proc.$": "$.Items[0].proc",
-                          "anno_file.$": "$.Items[0].anno_file",
-                          "retry_attempt.$": "States.MathAdd($.Items[0].retry_attempt, 1)",
-                          "dataset_mib.$": "$.Items[0].dataset_mib",
-                          "overhead_mib.$": "States.MathAdd($.Items[0].overhead_mib, $.Items[0].overhead_mib)",
-                          "job_id.$": "$.Items[0].job_id",
-                          "query_mode.$": "$.Items[0].query_mode",
-                          "query.$": "$.Items[0].query",
-                          "num_top_labels.$": "$.Items[0].num_top_labels",
-                          "min_kmers_fraction_label.$": "$.Items[0].min_kmers_fraction_label",
-                          "min_kmers_fraction_graph.$": "$.Items[0].min_kmers_fraction_graph"
-                        }
-                      ]
+                      "new.$": "States.JsonMerge($, {\"retry_attempt\": States.MathAdd($.retry_attempt, 1)}, false)"
                     },
+                    "ResultPath": "$",
+                    "OutputPath": "$.new",
                     "Next": "CheckRetryLimit"
                   },
                   "CheckRetryLimit": {
                     "Type": "Choice",
                     "Choices": [
-                      {
-                        "Variable": "$.Items[0].retry_attempt",
-                        "NumericLessThan": 3,
-                        "Next": "SubmitQuery"
-                      }
+                      { "Variable": "$.retry_attempt", "NumericLessThan": 3, "Next": "ConfigureTask" }
                     ],
                     "Default": "MarkFailed"
                   },
-                  "MarkSucceeded": {
-                    "Type": "Pass",
-                    "ResultPath": "$",
-                    "Parameters": {
-                      "jobName.$": "$.JobName",
-                      "status": "SUCCEEDED"
-                    },
-                    "End": true
-                  },
-                  "MarkFailed": {
-                    "Type": "Pass",
-                    "ResultPath": "$",
-                    "Parameters": {
-                      "jobName.$": "$.Items[0].jobName",
-                      "status": "FAILED"
-                    },
-                    "End": true
-                  }
+                  "MarkSucceeded": { "Type": "Pass", "Result": { "status": "SUCCEEDED" }, "End": true },
+                  "MarkFailed":    { "Type": "Pass", "Result": { "status": "FAILED"    }, "End": true }
                 }
               },
               "ResultPath": "$.tasks",
