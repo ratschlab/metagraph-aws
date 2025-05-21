@@ -765,7 +765,8 @@ Resources:
                   dataset = idx + (path and "/") + path
                   dataset_mib = (
                       size_mib(bucket, f"{dataset}/{files['graph']}") +
-                      size_mib(bucket, f"{dataset}/{files['anno']}")
+                      size_mib(bucket, f"{dataset}/{files['anno']}") +
+                      query_size_mib
                   )
 
                   tasks.append({
@@ -822,8 +823,11 @@ Resources:
                   while t["memory_mib"] <= t["dataset_mib"] + 20000:
                       t["memory_mib"] *= 2
                   t["memory_mib"] = str(t["memory_mib"] * 2**t["retry_attempt"])
-                  t["job_queue"] = "${MetagraphLargeBatchJobQueue}" if int(t["memory_mib"]) <= 125000 else "${MetagraphSuperBatchJobQueue}"
-                  t["threads_each"] = "32"
+                  use_super_queue = int(t["memory_mib"]) > 125000
+                  if use_super_queue:
+                      t["memory_mib"] = "756000" if int(t["memory_mib"]) > 250000 else "378000"
+                  t["job_queue"] = "${MetagraphLargeBatchJobQueue}" if not use_super_queue else "${MetagraphSuperBatchJobQueue}"
+                  t["threads_each"] = "32" if not use_super_queue else "48"
 
               t["retry_attempt"] += 1
               return t
