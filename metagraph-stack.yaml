@@ -668,9 +668,17 @@ Resources:
             export PATH="/opt/metagraph/metagraph/build:$PATH"
             export LD_LIBRARY_PATH="/usr/local/lib64:/usr/lib64:$LD_LIBRARY_PATH"
 
-            dnf install -y time
-            PROC=$(eval echo $PROC)
-            /usr/bin/time -v metagraph query $EXTRA_ARGS \
+            TIME_CMD=""
+            if [[ -n "$TIME" ]]; then
+                if ! rpm -q time &>/dev/null; then
+                    dnf install -y time
+                fi
+                TIME_CMD="/usr/bin/time -v"
+            fi
+
+            PROC=$(eval echo "$PROC")
+
+            $TIME_CMD metagraph query $EXTRA_ARGS \
               --threads-each $THREADS_EACH -p $PROC --batch-size $BATCH_SIZE \
               -i "/mnt/data/$DATASET/$GRAPH_FILE" \
               -a "/mnt/data/$DATASET/$ANNO_FILE" \
@@ -761,6 +769,7 @@ Resources:
                   )
 
                   tasks.append({
+                      "time":          q.get("time", ""),
                       "dataset":       dataset,
                       "graph_file":    files["graph"],
                       "anno_file":     files["anno"],
@@ -809,11 +818,11 @@ Resources:
                   t["job_queue"] = "${MetagraphBatchJobQueue}"
                   t["threads_each"] = "1"
               else:
-                  t["memory_mib"] = 125000
-                  while t["memory_mib"] <= t["dataset_mib"] + 10000:
+                  t["memory_mib"] = 62500
+                  while t["memory_mib"] <= t["dataset_mib"] + 20000:
                       t["memory_mib"] *= 2
                   t["memory_mib"] = str(t["memory_mib"] * 2**t["retry_attempt"])
-                  t["job_queue"] = "${MetagraphLargeBatchJobQueue}" if t["memory_mib"] == "125000" else "${MetagraphSuperBatchJobQueue}"
+                  t["job_queue"] = "${MetagraphLargeBatchJobQueue}" if int(t["memory_mib"]) <= 125000 else "${MetagraphSuperBatchJobQueue}"
                   t["threads_each"] = "32"
 
               t["retry_attempt"] += 1
@@ -1041,6 +1050,7 @@ Resources:
                           {"Type": "MEMORY", "Value.$": "$.memory_mib"}
                         ],
                         "Environment": [
+                          { "Name": "TIME",           "Value.$": "$.time" },
                           { "Name": "DATASET",        "Value.$": "$.dataset" },
                           { "Name": "GRAPH_FILE",     "Value.$": "$.graph_file" },
                           { "Name": "ANNO_FILE",      "Value.$": "$.anno_file" },
