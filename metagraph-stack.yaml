@@ -678,16 +678,32 @@ Resources:
 
             PROC=$(eval echo "$PROC")
 
-            $TIME_CMD metagraph query $EXTRA_ARGS \
-              --threads-each $THREADS_EACH -p $PROC --batch-size $BATCH_SIZE \
-              -i "/mnt/data/$DATASET/$GRAPH_FILE" \
-              -a "/mnt/data/$DATASET/$ANNO_FILE" \
-              --query-mode "$QUERY_MODE" \
-              --num-top-labels "$NUM_TOP_LABELS" \
-              --min-kmers-fraction-label "$MIN_KMERS_FRACTION_LABEL" \
-              --min-kmers-fraction-graph "$MIN_KMERS_FRACTION_GRAPH" \
-              "/mnt/bucket/$QUERY" > result.txt
-
+            case "${CMD:-query}" in
+              query)
+                $TIME_CMD metagraph query $EXTRA_ARGS \
+                  --threads-each "$THREADS_EACH" -p "$PROC" --batch-size "$BATCH_SIZE" \
+                  -i "/mnt/data/$DATASET/$GRAPH_FILE" \
+                  -a "/mnt/data/$DATASET/$ANNO_FILE" \
+                  --query-mode "$QUERY_MODE" \
+                  --num-top-labels "$NUM_TOP_LABELS" \
+                  --min-kmers-fraction-label "$MIN_KMERS_FRACTION_LABEL" \
+                  --min-kmers-fraction-graph "$MIN_KMERS_FRACTION_GRAPH" \
+                  "/mnt/bucket/$QUERY" > result.txt
+                ;;
+              align)
+                $TIME_CMD metagraph align $EXTRA_ARGS \
+                  -p "$PROC" --batch-size "$BATCH_SIZE" \
+                  -i "/mnt/data/$DATASET/$GRAPH_FILE" \
+                  -a "/mnt/data/$DATASET/$ANNO_FILE" \
+                  --align-min-seed-length "$ALIGN_MIN_SEED_LENGTH" \
+                  --align-min-exact-match "$ALIGN_MIN_EXACT_MATCH" \
+                  "/mnt/bucket/$QUERY" > result.txt
+                ;;
+              *)
+                echo "Unsupported CMD value: ${CMD}" >&2
+                exit 1
+                ;;
+            esac
 
             echo "Sorting result.txt by index..."
             sort -t $'\t' -k1,1n result.txt -o result.txt
@@ -771,6 +787,7 @@ Resources:
 
                   tasks.append({
                       "time":          q.get("time", ""),
+                      "cmd":           q.get("cmd", "query"),
                       "dataset":       dataset,
                       "graph_file":    files["graph"],
                       "anno_file":     files["anno"],
@@ -779,6 +796,8 @@ Resources:
                       "num_top_labels":str(q.get("num_top_labels", "inf")),
                       "min_kmers_fraction_label": str(q.get("min_kmers_fraction_label", 0.7)),
                       "min_kmers_fraction_graph": str(q.get("min_kmers_fraction_graph", 0.0)),
+                      "align_min_seed_length": str(q.get("align_min_seed_length", 27)),
+                      "align_min_exact_match": str(q.get("align_min_exact_match", 0.85)),
                       "extra_args":    q.get("extra_args", ""),
                       "batch_size":    str(q.get("batch_size", 8*10**6)),
                       "proc":          q.get("proc", "$(nproc)"),
@@ -1055,6 +1074,7 @@ Resources:
                         ],
                         "Environment": [
                           { "Name": "TIME",           "Value.$": "$.time" },
+                          { "Name": "CMD",            "Value.$": "$.cmd" },
                           { "Name": "DATASET",        "Value.$": "$.dataset" },
                           { "Name": "GRAPH_FILE",     "Value.$": "$.graph_file" },
                           { "Name": "ANNO_FILE",      "Value.$": "$.anno_file" },
@@ -1068,6 +1088,8 @@ Resources:
                           { "Name": "NUM_TOP_LABELS", "Value.$": "$.num_top_labels" },
                           { "Name": "MIN_KMERS_FRACTION_LABEL",  "Value.$": "$.min_kmers_fraction_label" },
                           { "Name": "MIN_KMERS_FRACTION_GRAPH",  "Value.$": "$.min_kmers_fraction_graph" },
+                          { "Name": "ALIGN_MIN_SEED_LENGTH",  "Value.$": "$.align_min_seed_length" },
+                          { "Name": "ALIGN_MIN_EXACT_MATCH",  "Value.$": "$.align_min_exact_match" },
                           { "Name": "MANAGED_BY_AWS", "Value":   "STARTED_BY_STEP_FUNCTIONS" }
                         ]
                       },
